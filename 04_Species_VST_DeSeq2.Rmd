@@ -1,0 +1,222 @@
+---
+title: "VST_Beta_DESeq2_DA"
+author: "Stefano Romano"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+# Before you begin:
+
+These scripts were tailored for the analyses we conducted. They are not meant to be used in other contexts and are reported here as a detailed extension of the method section of our article. Please, use them at your own risk.
+
+If you use any of the material or approaches in these scripts, please, cite:
+Romano et al, 2020, *Meta-analysis of the Parkinson’s disease gut microbiome suggests alterations linked to intestinal inflammation*
+
+Thank you!
+
+# Load the needed packages
+```{r, message=F}
+list.of.packages <- c("ggplot2", "dplyr", "reshape2", "devtools", "ggpubr", "vegan")
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages)
+
+if (!requireNamespace("BiocManager", quietly = TRUE)){
+  install.packages("BiocManager")}
+
+
+list.of.bioc <- c("DESeq2", "phyloseq",  "grDevices", "microbiome")
+new.packages <- list.of.bioc[!(list.of.bioc %in% installed.packages()[,"Package"])]
+if(length(new.packages)) BiocManager::install(new.packages)
+
+
+library(phyloseq)
+library(ggpubr)
+library(DESeq2)
+library(ggplot2)
+library(reshape2)
+library(dplyr)
+library(microbiome) 
+library(grDevices)
+library(devtools)
+library(vegan)
+source('GMPR.R') # Version: 0.1. Date: 2017/02/07
+```
+
+# Overview of the analyses
+We will verify the effect of disease status and study on the microbial community structure and perform a differential abundance analysis using DESeq2.
+Please provide the full path to the files and R objects that need to be loaded.
+
+## Load the list pf phyloseq objects
+```{r setup, message=FALSE}
+l_phylo<-readRDS("Phyloseq_list_all_studies.rds")
+```
+
+## Remove Eukaryotes and Chloroplast. Create DeSeq objects
+```{r, message=F}
+# Remove Eukaryotes
+l_phylo<-lapply(l_phylo, function(x) prune_taxa(taxa_names(x)[!(grepl("Eukaryota", taxa_names(x), ignore.case = TRUE))], x))
+
+# Check that there are not Euk left
+if(length(unlist(lapply(l_phylo, function(x) taxa_names(x)[grep("Eukary*", taxa_names(x))]))) == 0){
+  print("All Eukaryotes removed")
+}else{stop("There are still Eukaryotes sequences in the files")}
+
+# Check Chloroplasts
+for(i in 1:length(l_phylo)){
+  if(sum(grep("Chloroplast", taxa_names(l_phylo[[i]]))) > 0){
+    l_phylo[[i]]<-prune_taxa(taxa_names(l_phylo[[i]])[!(grepl("Chloropl*", taxa_names(l_phylo[[i]]), ignore.case = TRUE))], l_phylo[[i]])
+  } else {}
+}
+
+if(length(unlist(lapply(l_phylo, function(x) taxa_names(x)[grep("Chloropl*", taxa_names(x))]))) == 0){
+  print("All Chloroplast removed")
+}else{stop("There are still Chloroplast sequences in the files")}
+
+# Remove samples with 0 counts if any 
+l_phylo<-lapply(l_phylo, function(x) prune_samples(sample_sums(x) > 0, x))
+
+# transform variable in factor
+for(i in 1:length(l_phylo)){
+  x<-meta(l_phylo[[i]])
+  x$status<-as.factor(x$statu)
+  x$study<-as.factor(x$study)
+  sample_data(l_phylo[[i]])<-sample_data(x)
+}
+
+# Make DESeq objects
+l_deseq<-lapply(l_phylo, function(x) phyloseq_to_deseq2(x, ~ status)) # The warning here is meaningless because we are going to create a new ds object below for the combined dataset
+l_deseq$Combined<-phyloseq_to_deseq2(l_phylo[["Combined"]], design = ~ study + status)
+
+```
+
+## Calcualte Size facor and perform DeSeq analyses
+
+```{r, message=F}
+for(i in 1:length(l_deseq)){
+  gmpr.size.factor <- GMPR(as.matrix(as.data.frame(otu_table(l_phylo[[i]]))))
+  sizeFactors(l_deseq[[i]])<-gmpr.size.factor
+}
+
+l_dseq_ds<-lapply(l_deseq, function(x) DESeq(x))
+l_deseq_res<-lapply(l_dseq_ds, function(x) results(x, independentFiltering  = TRUE))
+nrow(l_deseq_res[["Combined"]])
+l_deseq_sign<-lapply(l_deseq_res, function(x) subset(x, padj <= 0.05))
+nrow(l_deseq_sign[["Combined"]])
+
+# Create a list with the name of the sign taxa 
+l_sign_deseq_taxa<-lapply(l_deseq_sign, function(x) rownames(x))
+saveRDS(l_sign_deseq_taxa, "DeSeq2_GMPR_list_Species_DA.rds")
+
+```
+
+
+## Perform beta diversity analyses and clustering
+
+```{r, message=FALSE}
+set.seed(987)
+# Since there are too many 0 then I use the GMPR transformations (re-called from above dseq object)
+l_vst<-lapply(l_deseq, function(x) varianceStabilizingTransformation(x, blind = FALSE))
+
+# Add the tranformed data to te phyloseq objects
+for(i in 1:length(l_vst)){
+  otu_table(l_phylo[[i]])<-otu_table(assay(l_vst[[i]]), taxa_are_rows = T)
+}
+
+# Calculate indices 
+l_bray<-lapply(l_phylo, function(x) phyloseq::distance(x, method= "bray", na.rm = F))
+l_jsd<-lapply(l_phylo, function(x) phyloseq::distance(x, method= "jsd", na.rm=F))
+l_euc<-lapply(l_phylo, function(x) phyloseq::distance(x, method= "euclidean", na.rm=F))
+
+# Calculate adonis for the 3 indices
+l_adonis_b<-l_bray
+names(l_adonis_b)<-names(l_bray)
+for(i in 1:(length(l_bray)-11)){
+  l_adonis_b[[i]]<-adonis2(l_bray[[i]] ~ status, data = meta(l_phylo[[i]]),add = "lingoes")
+}
+  l_adonis_b[[11]]<-adonis2(l_bray[[11]] ~ status, data = meta(l_phylo[[11]]))
+
+l_adonis_j<-l_jsd
+names(l_adonis_j)<-names(l_jsd)
+for(i in 1:(length(l_bray)-11)){
+  l_adonis_j[[i]]<-adonis2(l_jsd[[i]] ~ status, data = meta(l_phylo[[i]]),add = "lingoes")
+}
+  l_adonis_j[[11]]<-adonis2(l_jsd[[11]] ~ status, data = meta(l_phylo[[11]]))
+
+l_adonis_e<-l_euc
+names(l_adonis_e)<-names(l_euc)
+for(i in 1:length(l_euc)){
+  l_adonis_e[[i]]<-adonis2(l_euc[[i]] ~ status, data = meta(l_phylo[[i]]))
+}
+
+# Create a df with the adonis values 
+adonis_df_b<-data.frame(matrix(nrow = length(l_adonis_b), ncol = 4))
+for(i in 1:length(l_bray)){
+  adonis_df_b[i,]<- c(names(l_adonis_b)[i], l_adonis_b[[i]]$R2[1], l_adonis_b[[i]]$`Pr(>F)`[1], "Bray_VST")
+}
+adonis_df_jsd<-data.frame(matrix(nrow = length(l_adonis_b), ncol = 4))
+for(i in 1:length(l_bray)){
+  adonis_df_jsd[i,]<- c(names(l_adonis_j)[i], l_adonis_j[[i]]$R2[1], l_adonis_j[[i]]$`Pr(>F)`[1], "JSD_VST")
+}
+adonis_df_euc<-data.frame(matrix(nrow = length(l_adonis_e), ncol = 4))
+for(i in 1:length(l_bray)){
+  adonis_df_euc[i,]<- c(names(l_adonis_e)[i], l_adonis_e[[i]]$R2[1], l_adonis_e[[i]]$`Pr(>F)`[1], "Euclidean_VST")
+}
+
+# Combine and save results for plotting
+adonis_df<-rbind.data.frame(adonis_df_b, adonis_df_jsd, adonis_df_euc)
+names(adonis_df)<-c("Study", "R2", "pvalue", "Index")
+
+
+for(i in 1:nrow(adonis_df)){
+  if(adonis_df$pvalue[i] < 0.1 & adonis_df$pvalue[i] > 0.05){
+    adonis_df$Significant[i]<-"Significant [0.05<p<0.1]"
+  } else if (adonis_df$pvalue[i] < 0.05){
+    adonis_df$Significant[i]<-"Significant [p<0.05]"
+  } else {adonis_df$Significant[i]<-"Not_significant"
+  }
+}
+
+adonis_df$Significant<-as.factor(adonis_df$Significant)
+adonis_df$R2<-round(as.numeric(adonis_df$R2)*100, digits = 1)
+
+saveRDS(adonis_df, "Adonis_species_VST.rds")
+
+# Check the marginal effect of study and disease status on the 3 different distances
+adonis_com<-adonis2(l_jsd$Combined ~ study + status, data = meta(l_phylo$Combined), by = "margin")
+adonis_com_b<-adonis2(l_bray$Combined ~ study + status, data = meta(l_phylo$Combined), by = "margin")
+adonis_com_e<-adonis2(l_euc$Combined ~ study + status, data = meta(l_phylo$Combined), by = "margin")
+
+
+# dbRDA (capscale) using Euclidean
+l_dbRDA_spe<-vector(mode = "list", length = 3)
+l_dbRDA_spe[[1]]<-ordinate(l_phylo[["Combined"]], method = "CAP", distance = l_euc[["Combined"]], formula = l_phylo[["Combined"]] ~ 1 )
+l_dbRDA_spe[[2]]<-ordinate(l_phylo[["Combined"]], method = "CAP", distance = l_euc[["Combined"]], formula = l_phylo[["Combined"]] ~ 1  + Condition(study))
+l_dbRDA_spe[[3]]<-ordinate(l_phylo[["Combined"]], method = "CAP", distance = l_euc[["Combined"]], formula = l_phylo[["Combined"]] ~  status + Condition(study))
+
+names(l_dbRDA_spe)<-c("Constrained for Study and Status", "Blocked", "Blocked_constrained")
+l_dbRDA_spe_plots<-lapply(l_dbRDA_spe, function(x) plot_ordination(l_phylo[["Combined"]], x, 
+                "samples", color="status", shape = "study") +
+                theme_bw() +
+                scale_shape_manual(values=c(2,5,6,11,17,0,19,7,8,4)) +
+                scale_colour_manual(values=c("#999999", "#E69F00")) +
+                geom_point(size = 2.5) +
+                labs(shape = "Study", color = "Status") +
+                theme(legend.title = element_text(size = 12, face = "bold"),
+                      legend.text = element_text(size = 12)))
+              
+                
+g<-ggarrange(plotlist = l_dbRDA_spe_plots, common.legend = T, font.label = list(size = 10), label.x = 0.15, label.y = 0.975, ncol = 3,
+             labels = c("a: Unconstrained", "b: Blocked by study", "c: Blocked by study constrained by condition"),
+             hjust = c(0,0,0),legend = "bottom") 
+
+g_Species<-annotate_figure(g, top = text_grob("Species", size = 12, face = "bold"))
+
+# Save RDS
+saveRDS(g_Species, "dbRDA_species_VST.rds")
+```
+
+## Save workspace
+```{r, message=FALSE}
+save.image("04_Species_DESEQ_GMPR_workspace.RData")
+
+```

@@ -1,0 +1,129 @@
+---
+title: "Combine DA analyses"
+author: "Stefano Romano"
+output: html_document
+  chunk_output_type: console
+---
+# Before you begin:
+
+These scripts were tailored for the analyses we conducted. They are not meant to be used in other contexts and are reported here as a detailed extension of the method section of our article. Please, use them at your own risk.
+
+If you use any of the material or approaches in these scripts, please, cite:
+Romano et al, 2020, *Meta-analysis of the Parkinson’s disease gut microbiome suggests alterations linked to intestinal inflammation*
+
+Thank you!
+
+
+```{r setup, include=FALSE}
+
+list.of.packages <- c("dplyr", "reshape2", "plyr", "propr", "ggpubr")
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages)
+
+if (!requireNamespace("BiocManager", quietly = TRUE)){
+  install.packages("BiocManager")}
+
+
+list.of.bioc <- c("phyloseq", "zCompositions", "microbiome")
+new.packages <- list.of.bioc[!(list.of.bioc %in% installed.packages()[,"Package"])]
+if(length(new.packages)) BiocManager::install(new.packages)
+
+
+library(phyloseq)
+library(microbiome)
+library(reshape2)
+library(dplyr)
+library(vegan)
+library(devtools)
+library(ggpubr)
+library(propr)
+
+```
+
+# Overview of the analyses
+We combine the data from all different approaches used to infer differential abundance and format dfs for GLMM and for making the final graphs.
+
+Please, provide the full path to the files and R objects that need to be loaded.
+
+## Load the list of objects
+```{r}
+
+l_prop<-readRDS("List_prop_species.rds")
+x<-readRDS("NP_list_species_DA.rds")
+wilcox_prop<-lapply(x, names)
+wilcox_prop$Combined<-x$Combined
+
+dseq<-readRDS("DeSeq2_GMPR_list_Species_DA.rds")
+rf_ss_ancom<-readRDS("List_ancom_Species_April20.rds")
+rf_ss_taxa<-readRDS("List_Spec_taxa_Species_April20.rds")
+
+
+# Meta-analysis
+random.meta.f.all<-readRDS(file = "Meta_species.rds")
+
+# Adjust the results of the meta-analysis.
+# Correct the P-values and select the one with sign that have q <= 0.05
+random.meta.f.all$pval.random<-p.adjust(random.meta.f.all$pval.random, "BH")
+sign<-subset(random.meta.f.all,  (lower.random > 0 & upper.random > 0) | (lower.random < 0 & upper.random < 0))
+random.sign.all<-subset(sign, pval.random <= 0.05)
+
+```
+
+## Format ANCOM results
+```{r}
+ancom_sign_rfss<-lapply(rf_ss_ancom, function(x) subset(x, detected_0.6 == TRUE))
+l_new_ancom_sign_taxa<-ancom_sign_rfss
+
+for(i in 1:length(ancom_sign_rfss)){
+  l_new_ancom_sign_taxa[[i]]<-merge(ancom_sign_rfss[[i]], rf_ss_taxa[[i]], by.x= 1, by.y=2)$taxa
+}
+
+lapply(ancom_sign_rfss, nrow)
+l_ancom_sign_taxa<-l_new_ancom_sign_taxa
+
+```
+
+## Make a first graph with number of DA taxa
+```{r}
+# Get the number for the graph
+nw<-lapply(wilcox_prop, function(x) data.frame(nsign=length(x), method = rep("Coin_propor")))
+nd<-lapply(dseq, function(x) data.frame(nsign=length(x), method = rep("DeSeq2_GMPR")))
+na<-lapply(l_ancom_sign_taxa, function(x) data.frame(nsign=length(x), method = rep("ANCOM")))
+
+da_all<-dseq
+all<-dseq
+for(i in 1:length(da_all)){
+  x<-c(as.character(wilcox_prop[[i]]), as.character(dseq[[i]]), 
+       as.character(l_ancom_sign_taxa[[i]]))
+  da_all[[i]]<-unlist(unique(x[duplicated(x)])) # this create a list containing only names of DA taxa based on consensus (2 out of 3 approaches)
+  all[[i]]<-data.frame(nsign=length(da_all[[i]]), method = "Consensus") # this create a df containing the counts of DA based on consensus (2 out of 3 approaches)
+}
+
+l_comb<-all
+for(i in 1:length(all)){
+  l_comb[[i]]<-rbind.data.frame(nw[[i]], nd[[i]], na[[i]], all[[i]]) # put together in a df the counts of DA recovered by the 3 methods plus the consensus
+}
+df_da<-data.table::rbindlist(l_comb, use.names = TRUE, idcol = TRUE) %>% as.data.frame() # create a formatted df for plotting
+
+df_da$.id<-factor(df_da$.id, levels = unique(df_da$.id))
+saveRDS(df_da, "DA_species.rds")
+
+# Save taxa list of the methods using pooled data
+saveRDS(da_all$Combined, "Sign_pooled_data.rds")
+
+# Save data of significant taxa obtained using pooled results (meta_analysis approach)
+saveRDS(random.sign.all, "Random_sign_all_species.rds")
+
+taxa_pooled<-unique(c(da_all$Combined, random.sign.all$statistic))
+
+sign_all<-prune_taxa(taxa_pooled, l_prop[[length(l_prop)]])
+saveRDS(sign_all, "Phyloseq_species_sign.rds")
+```
+
+### Now the external script for calculating GLMM (08) needs to be run
+
+## Save workspace
+```{r}
+save.image("Combine_DA_species_a.RData")
+```
+

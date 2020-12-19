@@ -1,0 +1,484 @@
+---
+title: "Create DA figures"
+author: "Stefano Romano"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+# Before you begin:
+
+These scripts were tailored for the analyses we conducted. They are not meant to be used in other contexts and are reported here as a detailed extension of the method section of our article. Please, use them at your own risk.
+
+If you use any of the material or approaches in these scripts, please, cite:
+Romano et al, 2020, *Meta-analysis of the Parkinson’s disease gut microbiome suggests alterations linked to intestinal inflammation*
+
+Thank you!
+
+# Load the needed packages
+```{r setup, include=FALSE}
+
+list.of.packages <- c("dplyr", "reshape2", "dplyr", "propr", "ggpubr", "meta", "ggplot2", "genodds")
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages)
+
+if (!requireNamespace("BiocManager", quietly = TRUE)){
+  install.packages("BiocManager")}
+
+
+list.of.bioc <- c("phyloseq", "microbiome")
+new.packages <- list.of.bioc[!(list.of.bioc %in% installed.packages()[,"Package"])]
+if(length(new.packages)) BiocManager::install(new.packages)
+
+
+library(phyloseq)
+library(microbiome)
+library(reshape2)
+library(ggplot2)
+library(dplyr)
+library(vegan)
+library(devtools)
+library(ggpubr)
+library(meta)
+library(genodds)
+
+```
+# Overview of the analyses
+
+Combine the data to make a final graph of differential abundant taxa.
+
+Please provide the full path for the files and R objects you need to load.
+
+## Load the the workspaces containing all formatted files
+
+```{r}
+load("Combine_DA_species_a.RData")
+
+removed_glm<-readRDS("Confounded_species.rds")
+p_ind_test<-readRDS("P_values_independence_test.rds")
+l_maps<-readRDS("Formatted_maps.rds")
+```
+
+# Check the results of the GLMM (script 08).
+
+Taxa potentially confounded by age and/or gender are manually removed
+
+```{R}
+
+removed_glm<-c("Bacteria;Actinobacteriota;Actinobacteria;Micrococcales;Micrococcaceae;Rothia;?", 
+                "Bacteria;Bacteroidota;Bacteroidia;Bacteroidales;Prevotellaceae;?;?",
+                "Bacteria;Bacteroidota;Bacteroidia;Bacteroidales;Prevotellaceae;Prevotella;metagenome",
+                "Bacteria;Bacteroidota;Bacteroidia;Bacteroidales;Rikenellaceae;Alistipes;Alistipes inops", 
+                "Bacteria;Firmicutes;Clostridia;Clostridiales;Clostridiaceae;Clostridium sensu stricto 1;?",
+                "Bacteria;Firmicutes;Clostridia;Lachnospirales;Lachnospiraceae;Lachnospira;?",
+                "Bacteria;Firmicutes;Clostridia;Lachnospirales;Lachnospiraceae;Lachnospiraceae NK4A136 group;?",
+                "Bacteria;Firmicutes;Clostridia;Oscillospirales;Ruminococcaceae;Ruminococcus;gut metagenome",
+                "Bacteria;Firmicutes;Clostridia;Oscillospirales;Ruminococcaceae;UBA1819;uncultured organism",
+                "Bacteria;Firmicutes;Clostridia;Peptostreptococcales-Tissierellales;Anaerovoracaceae;[Eubacterium] brachy group;?",
+                "Bacteria;Proteobacteria;Gammaproteobacteria;Burkholderiales;Comamonadaceae;Comamonas;?",
+                "Bacteria;Proteobacteria;Gammaproteobacteria;Burkholderiales;Sutterellaceae;Sutterella;?",
+                "Bacteria;Proteobacteria;Gammaproteobacteria;Pasteurellales;Pasteurellaceae;Haemophilus;?",
+                "Bacteria;Proteobacteria;Gammaproteobacteria;Pasteurellales;Pasteurellaceae;Haemophilus;uncultured organism")
+              
+# Prune taxa
+
+if(length(removed_glm) != 0){
+  sign_all<-prune_taxa(taxa_names(sign_all)[!(taxa_names(sign_all) %in% removed_glm)], sign_all)
+  }else{ print ("No taxa were confounded by age or gender")}
+
+# There was a species missing in the random-effect meta-analysis because present in only 2 datasets and we used all taxa in minimum 3 datasets.
+# Hence, we need to re-calculate the random effect meta-analysis for this species
+
+random.sign.all<-subset(random.meta.f.all, statistic %in% taxa_names(sign_all))
+
+taxa_names(sign_all)[!(taxa_names(sign_all)%in% random.sign.all$statistic)]
+
+load("Meta_clr_lm_species.RData")
+library(meta)
+library(genodds)
+
+appendnames<- "Bacteria;Firmicutes;Clostridia;Oscillospirales;Oscillospiraceae;Colidextribacter;Clostridium sp. GD3"
+allnamesF <- setdiff(as.character(appendnames), c("id", "Row.names", "status"))
+meta_clrs_s <- lapply(allnamesF, function(a){
+  print(a)
+  results <- lapply(l_clr_all, FUN = function(d) {
+    if(a%in%names(d)) {
+      print(levels(d$status))
+      lo <- genodds(d[,a], d$status)
+      c(lo$pooled_lnodds, lo$pooled_SElnodds)
+      } 
+    else NULL
+  })
+  results <- data.frame(do.call(rbind,results))
+  names(results) <- c("estimate", "se")
+  print(results)
+  metagen(TE=estimate, seTE=se,data=results,method.tau = "ML",title = a, studlab = rownames(results))
+})
+
+random.meta.f.all <- do.call(rbind,lapply(meta_clrs_s, function(m) as.data.frame(m[c("TE.random","seTE.random", "lower.random", "upper.random", "pval.random")])))
+random.meta.f.all$statistic <- allnamesF
+
+# Combine results
+random.sign.all<-rbind.data.frame(random.sign.all, random.meta.f.all)
+
+# Create df
+map<-meta(sign_all)
+otu<-as.data.frame(t(otu_table(sign_all)))
+all(rownames(map) == rownames(otu))
+otu<-otu[, order(names(otu))] # sort the taxa
+sign_all<-cbind.data.frame(otu, map)
+
+# Look for each taxa in the diff method
+taxa<-names(sign_all)[-1*c(ncol(sign_all), ncol(sign_all)-1)]
+
+da_count_w<-data.frame(taxa = taxa, method = rep("WMW", length = length(taxa)), counts = vector(length = length(taxa)))
+da_count_d<-data.frame(taxa = taxa, method = rep("DESeq", length = length(taxa)), counts = vector(length = length(taxa)))
+da_count_a<-data.frame(taxa = taxa, method = rep("ANCOM", length = length(taxa)), counts = vector(length = length(taxa)))
+for(t in 1 :length(taxa)){
+  for(i in 1:length(wilcox_prop[-11])){
+    if(taxa[t] %in% wilcox_prop[[i]]){
+      da_count_w$counts[t]<-da_count_w$counts[t]+1
+    }
+  }
+}
+for(t in 1 :length(taxa)){
+  for(i in 1:length(dseq[-11])){
+    if(taxa[t] %in% dseq[[i]]){
+      da_count_d$counts[t]<-da_count_d$counts[t]+1
+    }
+  }
+}
+for(t in 1 :length(taxa)){
+  for(i in 1:length(l_ancom_sign_taxa[-11])){
+    if(taxa[t] %in% l_ancom_sign_taxa[[i]]){
+      da_count_a$counts[t]<-da_count_a$counts[t]+1
+    }
+  }
+}
+
+da_name_count<-names(sign_all)[1:(ncol(sign_all)-2)]
+da_per_study<-data.frame(taxa = da_name_count, nstudy = vector(length = length(da_name_count)))
+for(i in 1:nrow(da_per_study)){
+  t<-as.character(da_per_study$taxa[i])
+  sm<-0
+  tot<-0
+  for(s in 1:length(dseq[-11])){
+    sm<-sm + sum(dseq[[s]] %in% t)
+    sm<-sm + sum(l_ancom_sign_taxa[[s]] %in% t)
+    sm<-sm + sum(wilcox_prop[[s]] %in% t)
+    if(sm != 0){
+      tot<-tot + 1
+      sm<-0}
+    da_per_study[i,2]<-tot
+  }
+}
+
+da_count<-rbind.data.frame(da_count_w, da_count_d, da_count_a)
+
+# Add a column indicating wether taxa were DA in pooled data or pooled results approaches.
+pooled_data_sign<-readRDS("Sign_pooled_data.rds")
+random_only_sign<-readRDS("Random_sign_all_species.rds")
+
+random.sign.all$method<-vector(length = nrow(random.sign.all))
+for(i in 1:nrow(random.sign.all)){
+  if(random.sign.all$statistic[i] %in% pooled_data_sign & random.sign.all$statistic[i] %in% random_only_sign$statistic){
+    random.sign.all$method[i]<-"Pooled data & Pooled results"
+  } else if (random.sign.all$statistic[i] %in% pooled_data_sign ){
+    random.sign.all$method[i]<-"Pooled data"
+  } else {    random.sign.all$method[i]<-"Pooled results" }
+}
+random.sign.all$method<-factor(random.sign.all$method, levels = c("Pooled data", "Pooled results" , "Pooled data & Pooled results"))
+
+# Adjust the taxa name so that can be easily displayed in the figure.
+# Make short taxa names
+
+taxa<-as.character(da_per_study$taxa)
+shortaxa<-vector(length = length(taxa))
+for(i in 1:length(shortaxa)){
+  x<-c(strsplit(taxa[i], split = ";")[[1]][4],
+      strsplit(taxa[i], split = ";")[[1]][5],
+       strsplit(taxa[i], split = ";")[[1]][6],
+       strsplit(taxa[i], split = ";")[[1]][7])
+  if(x[2] == "?" & x[3] == "?" & x[4] == "?"){
+    shortaxa[i]<-paste(x[1], "unknown sp", sep = " ")
+  } else if(x[2] != "?" & x[3] == "?" & x[4] == "?"){
+    shortaxa[i]<-paste(x[2], "unknown sp", sep = " ")
+  } else if(x[3] == "Roseburia" & x[4] == "?"){
+    shortaxa[i]<-paste(x[3], "sp (a)", sep = " ")
+  } else if(x[3] == "Roseburia" & x[4] == "uncultured organism"){
+    shortaxa[i]<-paste(x[3], "sp (b)", sep = " ")
+  } else if(x[3] == "Ruminococcus" & x[4] == "gut metagenome"){
+    shortaxa[i]<-paste(x[3], "sp", sep = " ")
+  } else if(x[4] == "Ruminococcus bicirculans"){
+    shortaxa[i]<-x[4]
+  } else if(x[4] == "Massiliomicrobiota timonensis"){
+    shortaxa[i]<-x[4]
+  } else if(x[4] == "Alistipes inops"){
+    shortaxa[i]<-x[4]
+  } else if(x[4] == "Akkermansia muciniphila"){
+    shortaxa[i]<-x[4]
+  } else if(x[3] == "NK4A214 group" & x[4] == "uncultured organism"){
+    shortaxa[i]<-"Oscillospiraceae NK4A214 group sp (a)"
+  } else if(x[3] == "NK4A214 group" & x[4] == "uncultured rumen bacterium"){
+    shortaxa[i]<-"Oscillospiraceae NK4A214 group sp (b)"
+    }  else { shortaxa[i]<-paste(x[3], "sp", sep = " ")}
+}
+
+# Format the name of other species
+shortaxa[shortaxa == "[Clostridium] methylpentosum group unknown sp"]<-"Clostridium methylpentosum group sp"
+shortaxa[shortaxa == "[Eubacterium] hallii group sp"]<-"Eubacterium hallii group sp" 
+shortaxa[shortaxa == "NK4A214 group sp"]<-"Oscillospiraceae NK4A214 group sp"   
+shortaxa[shortaxa == "[Eubacterium] siraeum group sp"]<-"Eubacterium siraeum group sp"  
+shortaxa[shortaxa == "[Eubacterium] xylanophilum group sp"]<-"Eubacterium xylanophilum group sp"   
+shortaxa[shortaxa == "Colidextribacter sp"]<-"Colidextribacter sp GD3"   
+
+da_per_study$taxa<-shortaxa
+
+# df - for box plot
+df<-melt(sign_all)
+taxa<-as.character(df$variable)
+shortaxa<-vector(length = length(taxa))
+for(i in 1:length(shortaxa)){
+  x<-c(strsplit(taxa[i], split = ";")[[1]][4],
+      strsplit(taxa[i], split = ";")[[1]][5],
+       strsplit(taxa[i], split = ";")[[1]][6],
+       strsplit(taxa[i], split = ";")[[1]][7])
+  if(x[2] == "?" & x[3] == "?" & x[4] == "?"){
+    shortaxa[i]<-paste(x[1], "unknown sp", sep = " ")
+  } else if(x[2] != "?" & x[3] == "?" & x[4] == "?"){
+    shortaxa[i]<-paste(x[2], "unknown sp", sep = " ")
+  } else if(x[3] == "Roseburia" & x[4] == "?"){
+    shortaxa[i]<-paste(x[3], "sp (a)", sep = " ")
+  } else if(x[3] == "Roseburia" & x[4] == "uncultured organism"){
+    shortaxa[i]<-paste(x[3], "sp (b)", sep = " ")
+  } else if(x[3] == "Ruminococcus" & x[4] == "gut metagenome"){
+    shortaxa[i]<-paste(x[3], "sp", sep = " ")
+  } else if(x[4] == "Ruminococcus bicirculans"){
+    shortaxa[i]<-x[4]
+  } else if(x[4] == "Massiliomicrobiota timonensis"){
+    shortaxa[i]<-x[4]
+  } else if(x[4] == "Alistipes inops"){
+    shortaxa[i]<-x[4]
+  } else if(x[4] == "Akkermansia muciniphila"){
+    shortaxa[i]<-x[4]
+  } else if(x[3] == "NK4A214 group" & x[4] == "uncultured organism"){
+    shortaxa[i]<-"Oscillospiraceae NK4A214 group sp (a)"
+  } else if(x[3] == "NK4A214 group" & x[4] == "uncultured rumen bacterium"){
+    shortaxa[i]<-"Oscillospiraceae NK4A214 group sp (b)"
+    }  else { shortaxa[i]<-paste(x[3], "sp", sep = " ")}
+}
+
+
+# Format the name of other species
+shortaxa[shortaxa == "[Clostridium] methylpentosum group unknown sp"]<-"Clostridium methylpentosum group sp"
+shortaxa[shortaxa == "[Eubacterium] hallii group sp"]<-"Eubacterium hallii group sp" 
+shortaxa[shortaxa == "NK4A214 group sp"]<-"Oscillospiraceae NK4A214 group sp"   
+shortaxa[shortaxa == "[Eubacterium] siraeum group sp"]<-"Eubacterium siraeum group sp"   
+shortaxa[shortaxa == "[Eubacterium] xylanophilum group sp"]<-"Eubacterium xylanophilum group sp"   
+shortaxa[shortaxa == "Colidextribacter sp"]<-"Colidextribacter sp GD3"   
+
+df$variable<-shortaxa
+
+# da_count
+taxa<-as.character(da_count$taxa)
+shortaxa<-vector(length = length(taxa))
+for(i in 1:length(shortaxa)){
+  x<-c(strsplit(taxa[i], split = ";")[[1]][4],
+      strsplit(taxa[i], split = ";")[[1]][5],
+       strsplit(taxa[i], split = ";")[[1]][6],
+       strsplit(taxa[i], split = ";")[[1]][7])
+  if(x[2] == "?" & x[3] == "?" & x[4] == "?"){
+    shortaxa[i]<-paste(x[1], "unknown sp", sep = " ")
+  } else if(x[2] != "?" & x[3] == "?" & x[4] == "?"){
+    shortaxa[i]<-paste(x[2], "unknown sp", sep = " ")
+  } else if(x[3] == "Roseburia" & x[4] == "?"){
+    shortaxa[i]<-paste(x[3], "sp (a)", sep = " ")
+  } else if(x[3] == "Roseburia" & x[4] == "uncultured organism"){
+    shortaxa[i]<-paste(x[3], "sp (b)", sep = " ")
+  } else if(x[3] == "Ruminococcus" & x[4] == "gut metagenome"){
+    shortaxa[i]<-paste(x[3], "sp", sep = " ")
+  } else if(x[4] == "Ruminococcus bicirculans"){
+    shortaxa[i]<-x[4]
+  } else if(x[4] == "Massiliomicrobiota timonensis"){
+    shortaxa[i]<-x[4]
+  } else if(x[4] == "Alistipes inops"){
+    shortaxa[i]<-x[4]
+  } else if(x[4] == "Akkermansia muciniphila"){
+    shortaxa[i]<-x[4]
+  } else if(x[3] == "NK4A214 group" & x[4] == "uncultured organism"){
+    shortaxa[i]<-"Oscillospiraceae NK4A214 group sp (a)"
+  } else if(x[3] == "NK4A214 group" & x[4] == "uncultured rumen bacterium"){
+    shortaxa[i]<-"Oscillospiraceae NK4A214 group sp (b)"
+    }  else { shortaxa[i]<-paste(x[3], "sp", sep = " ")}
+}
+
+# Format the name of other species
+shortaxa[shortaxa == "[Clostridium] methylpentosum group unknown sp"]<-"Clostridium methylpentosum group sp"
+shortaxa[shortaxa == "[Eubacterium] hallii group sp"]<-"Eubacterium hallii group sp" 
+shortaxa[shortaxa == "NK4A214 group sp"]<-"Oscillospiraceae NK4A214 group sp"   
+shortaxa[shortaxa == "[Eubacterium] siraeum group sp"]<-"Eubacterium siraeum group sp"   
+shortaxa[shortaxa == "[Eubacterium] xylanophilum group sp"]<-"Eubacterium xylanophilum group sp"   
+shortaxa[shortaxa == "Colidextribacter sp"]<-"Colidextribacter sp GD3"   
+
+da_count$taxa<-shortaxa
+
+# effect size
+taxa<-as.character(random.sign.all$statistic)
+shortaxa<-vector(length = length(taxa))
+for(i in 1:length(shortaxa)){
+  x<-c(strsplit(taxa[i], split = ";")[[1]][4],
+      strsplit(taxa[i], split = ";")[[1]][5],
+       strsplit(taxa[i], split = ";")[[1]][6],
+       strsplit(taxa[i], split = ";")[[1]][7])
+  if(x[2] == "?" & x[3] == "?" & x[4] == "?"){
+    shortaxa[i]<-paste(x[1], "unknown sp", sep = " ")
+  } else if(x[2] != "?" & x[3] == "?" & x[4] == "?"){
+    shortaxa[i]<-paste(x[2], "unknown sp", sep = " ")
+  } else if(x[3] == "Roseburia" & x[4] == "?"){
+    shortaxa[i]<-paste(x[3], "sp (a)", sep = " ")
+  } else if(x[3] == "Roseburia" & x[4] == "uncultured organism"){
+    shortaxa[i]<-paste(x[3], "sp (b)", sep = " ")
+  } else if(x[3] == "Ruminococcus" & x[4] == "gut metagenome"){
+    shortaxa[i]<-paste(x[3], "sp", sep = " ")
+  } else if(x[4] == "Ruminococcus bicirculans"){
+    shortaxa[i]<-x[4]
+  } else if(x[4] == "Massiliomicrobiota timonensis"){
+    shortaxa[i]<-x[4]
+  } else if(x[4] == "Alistipes inops"){
+    shortaxa[i]<-x[4]
+  } else if(x[4] == "Akkermansia muciniphila"){
+    shortaxa[i]<-x[4]
+  } else if(x[3] == "NK4A214 group" & x[4] == "uncultured organism"){
+    shortaxa[i]<-"Oscillospiraceae NK4A214 group sp (a)"
+  } else if(x[3] == "NK4A214 group" & x[4] == "uncultured rumen bacterium"){
+    shortaxa[i]<-"Oscillospiraceae NK4A214 group sp (b)"
+    }  else { shortaxa[i]<-paste(x[3], "sp", sep = " ")}
+}
+
+
+# Format the name of other species
+shortaxa[shortaxa == "[Clostridium] methylpentosum group unknown sp"]<-"Clostridium methylpentosum group sp"
+shortaxa[shortaxa == "[Eubacterium] hallii group sp"]<-"Eubacterium hallii group sp" 
+shortaxa[shortaxa == "NK4A214 group sp"]<-"Oscillospiraceae NK4A214 group sp"   
+shortaxa[shortaxa == "[Eubacterium] siraeum group sp"]<-"Eubacterium siraeum group sp"   
+shortaxa[shortaxa == "[Eubacterium] xylanophilum group sp"]<-"Eubacterium xylanophilum group sp"   
+shortaxa[shortaxa == "Colidextribacter sp"]<-"Colidextribacter sp GD3"   
+
+random.sign.all$statistic<-shortaxa
+
+# Order the data in the same way across dfs to make graph consistent
+random.sign.all<-random.sign.all[order(random.sign.all$TE.random),]
+factors<-unique(factor(random.sign.all$statistic, levels = unique(random.sign.all$statistic)))
+
+df$variable<-factor(df$variable, levels = factors)
+random.sign.all$statistic<-factor(random.sign.all$statistic, levels = factors)
+da_count$taxa<-factor(da_count$taxa, levels = factors)
+da_per_study$taxa<-factor(da_per_study$taxa, levels = factors)
+
+# Make Graphs
+e<-ggplot(random.sign.all, aes(y=TE.random, 
+                        ymax=upper.random, 
+                        ymin=lower.random,
+                        x=reorder(statistic, TE.random))) + 
+  geom_errorbar(width=0.3) + 
+  geom_point(aes(fill = method), size = 4.5, pch = 21) +  
+  coord_flip() + 
+  geom_hline(yintercept=0, linetype="dashed") + 
+  labs(fill = "Approaches") +
+  theme(axis.text.y = element_blank(), 
+        axis.title.y = element_blank(),
+        panel.background = element_blank(),
+        panel.grid.major = element_line(colour = "grey70"),
+        panel.grid.major.x = element_line(colour = "grey70"),
+        legend.direction = "horizontal",
+        legend.text=element_text(size=14.5),
+        legend.background = element_blank(),
+        legend.title = element_text(size = 14.5, face = "bold"),
+        axis.title = element_text(size =16),
+        axis.text.x = element_text(size = 16),
+        plot.margin = margin(15,2,2,2)) +
+  scale_fill_brewer(palette = 6) + 
+  labs(y="Mean difference in CLR (95% CI)")+
+  guides(fill = guide_legend(override.aes = list(size=6)))
+
+el<-get_legend(e)
+
+b<-ggplot(df, aes(x = variable, y = log10(value), fill = status)) +
+  geom_boxplot() +
+  theme(legend.position="top",
+        panel.background = element_blank(),
+        panel.grid.major = element_line(colour = "grey70"),
+        panel.grid.major.x = element_line(colour = "grey70"),
+        axis.title = element_text(size =16),
+        axis.text.y = element_text(size = 16, vjust = 0.25, hjust = 1),
+        legend.text = element_text(size = 14.5),
+        legend.title = element_text(size = 14.5, face = "bold"),
+        legend.background = element_blank(),
+        axis.text.x = element_text(size = 16),
+        plot.margin = margin(15,2,2,2)) +
+  ylab("log10(rel. abund)") +
+  xlab("Taxa: Species") +
+  coord_flip() +
+  labs(fill = "Disease status") +
+  scale_fill_manual(values=c("#999999", "#E69F00")) 
+bl<-get_legend(b)
+
+s<-ggplot(da_count, aes(x = taxa, y = counts, fill = method))+
+  geom_col(width = 0.7) +
+  theme(axis.text.y = element_blank(), 
+        axis.title.y = element_blank(),
+        panel.background = element_blank(),
+        panel.grid.major = element_line(colour ="grey70"),
+        panel.grid.major.x = element_line(colour = "gray70"),
+        legend.position="top",
+        axis.text.x = element_text(size = 16),
+        axis.title = element_text(size =16),
+        legend.text = element_text(size = 14.5),
+        legend.title = element_text(size = 14.5, face = "bold"),
+        legend.background = element_blank(),
+        plot.margin = margin(15,2,2,2)) +
+  coord_flip() +
+  labs(fill = "Methods") +
+  ylab("Number of studies and approaches") +
+  scale_fill_manual(values=c("#332288", "#44AA99","#DDCC77")) +
+  scale_y_continuous(limits = c(0, 12), breaks = c(0:12)) +
+  geom_point(data = da_per_study, mapping = aes(taxa, nstudy),
+             shape = 23,
+             fill = "gray",
+             size = 4.5) 
+ 
+sl<-get_legend(s)
+
+
+library(cowplot)
+library(gtable)
+library(grid)
+
+g1<-ggarrange(bl, el, sl, nrow = 1, widths = c(2.5, 4, 2.5), align = "hv")
+gg<-ggarrange(b, e, s, ncol = 3, legend  = "none",
+              label.x = 0.15, widths = c(2, 1, 1),
+              labels = c("a: relative abundances in pooled dataset", 
+                         "b: effect size", 
+                         "c: single dataset results"), font.label = list(size = 16),
+              hjust = c(-0.305,0.43,0.17),
+              vjust = c(1,1,1))
+
+title1=text_grob("Taxa showing significant differences in abundance between PD and controls", size = 19, face = "bold")
+
+(gg_f<-gridExtra::grid.arrange(g1, gg, nrow = 2, heights = c(1,12),
+                               top=title1))
+
+
+
+ggsave(plot = gg_f, filename = 
+       "Species_DA_overivew.tiff",
+       device = "tiff", 
+       width = 17, 
+       height = 10.5, 
+       dpi = 300)
+
+```
+
+## Save workspace
+```{r}
+save.image("Combine_DA_species_b.RData")
+```

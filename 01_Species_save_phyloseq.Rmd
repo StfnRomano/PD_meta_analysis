@@ -1,0 +1,722 @@
+---
+title: "Format_count_tables"
+author: "Stefano Romano"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+# Before you begin:
+
+These scripts were tailored for the analyses we conducted. They are not meant to be used in other contexts and are reported here as a detailed extension of the method section of our article. Please, use them at your own risk.
+
+If you use any of the material or approaches in these scripts, please, cite:
+Romano et al, 2020, *Meta-analysis of the Parkinson’s disease gut microbiome suggests alterations linked to intestinal inflammation*
+
+Thank you!
+
+
+# Load the needed pakcages
+
+```{r setup,message=FALSE}
+list.of.packages <- c("dplyr","devtools")
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages)
+
+if (!requireNamespace("BiocManager", quietly = TRUE)){
+    install.packages("BiocManager")}
+
+
+list.of.bioc <- c("phyloseq")
+new.packages <- list.of.bioc[!(list.of.bioc %in% installed.packages()[,"Package"])]
+if(length(new.packages)) BiocManager::install(new.packages)
+
+
+library(phyloseq)
+library(dplyr)
+library(devtools)
+```
+
+# Load and clean Species count tables 
+Samples with < 4500 reads are removed.
+Taxa with counts < 5 in < 2.5.% of samples are removed.
+A full path to the Lotus output should be provided.
+
+### Pietrucci et al
+```{r Pietrucci}
+# Load Species Count table
+pietr<-read.delim("Species.txt", header = T, stringsAsFactors = F)
+row.names(pietr)<-pietr$Species
+pietr<-pietr[,-1]
+
+# Load Lotus mapping file
+map<-read.delim("Pietrucci_et_al_mapping.txt", header = T, stringsAsFactors = F)
+names(map)[1]<-"SampleID"
+unique(map$host_phenotype)
+
+# Check that the samples order is the same in count table and mapping file
+all(colnames(pietr) == map$SampleID)
+
+# Create phyloseq object
+rownames(map)<-map$SampleID
+map<-map[,-1]
+pietr_phylo <- phyloseq(otu_table(as.matrix(pietr), taxa_are_rows = T), 
+                        sample_data(map))
+# Remove taxa that have < 5 counts in < 2.5% taxa
+wh0 = genefilter_sample(pietr_phylo, filterfun_sample(function(x) x > 5), A=0.025*nsamples(pietr_phylo))
+pietr_phylo = prune_taxa(wh0, pietr_phylo)
+
+# Check whether there are taxa in >= 90% samples
+df<-as.data.frame(otu_table(pietr_phylo))
+df[df>=1]<-1
+if(length(rowSums(df)[rowSums(df) >= 0.9*ncol(df)]) >1){
+  print("These are taxa in >90% of samples")
+  length(rowSums(df)[rowSums(df) >= 0.9*ncol(df)])
+}else{stop("Something is wrong here, there are no taxa present in > 90% samples")}
+
+# Look at the number of PD and HC samples
+sum(get_variable(pietr_phylo)$host_phenotype == "Parkinson") 
+sum(get_variable(pietr_phylo)$host_phenotype == "Control") 
+
+# Remove samples with < 4500 reads
+reads<-read.delim("demulti.acceptsPerSample.log", header = T, stringsAsFactors = F)
+if(nrow(subset(reads, Read1Accepted < 4500)) == 0){
+  saveRDS(pietr_phylo, 
+        "Pietrucci_Species.rds")
+}else{
+  keep<-subset(reads, Read1Accepted > 4500)$SampleID
+  pietr_phylo = prune_samples(keep, pietr_phylo)
+  if(any(taxa_sums(pietr_phylo) == 0)){
+    pietr_phylo <- prune_taxa(taxa_sums(pietr_phylo) > 0, pietr_phylo)
+  }
+  saveRDS(pietr_phylo, 
+        "Pietrucci_Species.rds")
+}
+
+```
+
+### Qian et al
+```{r Qian}
+# Load Species Count table
+qian<-read.delim("Species.txt",header = T, stringsAsFactors = F)
+row.names(qian)<-qian$Species
+qian<-qian[,-1]
+
+# Load Lotus mapping file
+map<-read.delim("Qian_et_al_mapping.txt", header = T, stringsAsFactors = F)
+names(map)[1]<-"SampleID"
+unique(map$status)
+
+# Check that the samples order is the same in count table and mapping file
+qian<-qian[,order(colnames(qian))]
+map<-map[order(map$SampleID),]
+all(colnames(qian) == map$SampleID)
+
+# Create phyloseq object
+rownames(map)<-map$SampleID
+map<-map[,-1]
+qian_phylo <- phyloseq(otu_table(as.matrix(qian), taxa_are_rows = T), 
+                        sample_data(map))
+
+
+# Remove taxa that have < 5 counts in < 2.5% taxa
+wh0 = genefilter_sample(qian_phylo, filterfun_sample(function(x) x > 5), A=0.025*nsamples(qian_phylo))
+qian_phylo <- prune_taxa(wh0, qian_phylo)
+
+# Check whether there are taxa in >= 90% samples
+df<-as.data.frame(otu_table(qian_phylo))
+df[df>=1]<-1
+if(length(rowSums(df)[rowSums(df) >= 0.9*ncol(df)]) >1){
+  print("There are taxa in >90% of samples")
+  length(rowSums(df)[rowSums(df) >= 0.9*ncol(df)])
+}else{stop("Something is wrong here, there are not taxa present in > 90% samples")}
+
+
+# Look at the number of PD and HC samples
+
+sum(get_variable(qian_phylo)$status == "Parkinson") 
+sum(get_variable(qian_phylo)$status == "Control") 
+
+# Remove samples with < 4500 reads
+reads<-read.delim("demulti.acceptsPerSample.log", header = T, stringsAsFactors = F)
+if(nrow(subset(reads, Read1Accepted < 4500)) == 0){
+  saveRDS(qian_phylo, 
+        "Qian_Species.rds")
+}else{
+  keep<-subset(reads, Read1Accepted > 4500)$SampleID
+  qian_phylo = prune_samples(keep, qian_phylo)
+  if(any(taxa_sums(qian_phylo) == 0)){
+    qian_phylo <- prune_taxa(taxa_sums(qian_phylo) > 0, qian_phylo)
+    }
+  saveRDS(qian_phylo, 
+        "Qian_Species.rds")
+}
+```
+
+### Hill-Burns et al
+```{r Hill_Burns}
+# Load Species Count table
+hb<-read.delim("Species.txt", header = T, stringsAsFactors = F)
+row.names(hb)<-hb$Species
+hb<-hb[,-1]
+
+# Load Lotus mapping file
+map<-read.delim("Hill_Burns_et_al_mapping.txt", header = T, stringsAsFactors = F)
+names(map)[1]<-"SampleID"
+
+# Correct sample names
+names(hb)<-sub("^X1", "1", names(hb))
+
+# Check that the samples order is the same in count table and mapping file
+all(colnames(hb) == map$SampleID)
+
+# Create phyloseq object
+rownames(map)<-map$SampleID
+map<-map[,-1]
+hb_phylo <- phyloseq(otu_table(as.matrix(hb), taxa_are_rows = T), 
+                        sample_data(map))
+
+# Remove taxa that have < 5 counts in < 2.5% taxa
+wh0 = genefilter_sample(hb_phylo, filterfun_sample(function(x) x > 5), A=0.025*nsamples(hb_phylo))
+hb_phylo <- prune_taxa(wh0, hb_phylo)
+
+# Check whether there are taxa in >= 90% samples
+df<-as.data.frame(otu_table(hb_phylo))
+df[df>=1]<-1
+if(length(rowSums(df)[rowSums(df) >= 0.9*ncol(df)]) >1){
+  print("There are taxa in >90% of samples")
+  length(rowSums(df)[rowSums(df) >= 0.9*ncol(df)])
+}else{stop("Something is wrong here, there are not taxa present in > 90% samples")}
+
+
+# Look at hte number of PD and HC samples
+
+sum(get_variable(hb_phylo)$Prkinson == "Parkinson") 
+sum(get_variable(hb_phylo)$Prkinson == "Control") 
+
+# Remove samples with < 4500 reads
+reads<-read.delim("demulti.acceptsPerSample.log", header = T, stringsAsFactors = F)
+
+if(nrow(subset(reads, ReadsAccepted < 4500)) == 0){
+  saveRDS(hb_phylo, 
+        "Hill_Burns_Species.rds")
+}else{
+  keep<-subset(reads, ReadsAccepted > 4500)$SampleID
+  hb_phylo = prune_samples(keep, hb_phylo)
+  if(any(taxa_sums(hb_phylo) == 0)){
+    hb_phylo <- prune_taxa(taxa_sums(hb_phylo) > 0, hb_phylo)
+    }
+  saveRDS(hb_phylo, 
+        "Hill_Burns_Species.rds")
+}
+
+```
+
+### Heinz-Bushart et al
+```{r Heinz-Bushart }
+# Load Species Count table
+heinz<-read.delim("Species.txt", header = T, stringsAsFactors = F)
+row.names(heinz)<-heinz$Species
+heinz<-heinz[,-1]
+
+# Load Lotus mapping file
+map<-read.delim("Heintz_Buschart_et_al_mapping.txt", header = T, stringsAsFactors = F)
+names(map)[1]<-"SampleID"
+
+# Check that the samples order is the same in count table and mapping file
+all(colnames(heinz) == map$SampleID)
+
+# Create phyloseq object
+rownames(map)<-map$SampleID
+map<-map[,-1]
+heinz_phylo <- phyloseq(otu_table(as.matrix(heinz), taxa_are_rows = T), 
+                        sample_data(map))
+
+# Remove taxa that have < 5 counts in < 2.5% taxa
+wh0 = genefilter_sample(heinz_phylo, filterfun_sample(function(x) x > 5), A=0.025*nsamples(heinz_phylo))
+heinz_phylo <- prune_taxa(wh0, heinz_phylo)
+
+# Check whether there are taxa in >= 90% samples
+df<-as.data.frame(otu_table(heinz_phylo))
+df[df>=1]<-1
+if(length(rowSums(df)[rowSums(df) >= 0.9*ncol(df)]) >1){
+  print("There are taxa in >90% of samples")
+  length(rowSums(df)[rowSums(df) >= 0.9*ncol(df)])
+}else{stop("Something is wrong here, there are not taxa present in > 90% samples")}
+
+
+# Look at the number of PD and HC samples
+
+sum(get_variable(heinz_phylo)$Status == "Parkinson") 
+sum(get_variable(heinz_phylo)$Status == "Control") 
+
+# Remove samples with < 4500 reads
+reads<-read.delim("demulti.acceptsPerSample.log", header = T, stringsAsFactors = F)
+
+if(nrow(subset(reads, Read1Accepted < 4500)) == 0){
+  saveRDS(heinz_phylo, 
+        "Heintz_Buschart_Species.rds")
+}else{
+  keep<-subset(reads, Read1Accepted > 4500)$SampleID
+  heinz_phylo = prune_samples(keep, heinz_phylo)
+  if(any(taxa_sums(heinz_phylo) == 0)){
+    heinz_phylo <- prune_taxa(taxa_sums(heinz_phylo) > 0, heinz_phylo)
+    }
+  saveRDS(heinz_phylo, 
+        "Heintz_Buschart_Species.rds")
+}
+
+```
+
+### Petrov et al
+```{r Petrov}
+# Load Species Count table
+petr<-read.delim("Species.txt", header = T, stringsAsFactors = F)
+row.names(petr)<-petr$Species
+petr<-petr[,-1]
+
+# Load Lotus mapping file
+map<-read.delim("Petrov_et_al_onlyPD_mapping.txt", header = T, stringsAsFactors = F)
+names(map)[1]<-"SampleID"
+
+# Check that the samples order is the same in count table and mapping file
+petr<-petr[,order(colnames(petr))]
+map<-map[order(map$SampleID),]
+all(colnames(petr) == map$SampleID)
+
+# Create phyloseq object
+rownames(map)<-map$SampleID
+map<-map[,-1]
+petr_phylo <- phyloseq(otu_table(as.matrix(petr), taxa_are_rows = T), 
+                        sample_data(map))
+
+# Remove taxa that have < 5 counts in < 2.5% taxa
+wh0 <- genefilter_sample(petr_phylo, filterfun_sample(function(x) x > 5), A=0.025*nsamples(petr_phylo))
+petr_phylo <- prune_taxa(wh0, petr_phylo)
+
+# Check whether there are taxa in >= 90% samples
+df<-as.data.frame(otu_table(petr_phylo))
+df[df>=1]<-1
+if(length(rowSums(df)[rowSums(df) >= 0.9*ncol(df)]) >1){
+  print("There are taxa in >90% of samples")
+  length(rowSums(df)[rowSums(df) >= 0.9*ncol(df)])
+}else{stop("Something is wrong here, there are not taxa present in > 90% samples")}
+
+
+# Look at the number of PD and HC samples
+sum(get_variable(petr_phylo)$diagnosis == "Parkinson") 
+sum(get_variable(petr_phylo)$diagnosis == "Control") 
+
+# Remove samples with < 4500 reads
+reads<-read.delim("demulti.acceptsPerSample.log", header = T, stringsAsFactors = F)
+
+if(nrow(subset(reads, ReadsAccepted < 4500)) == 0){
+  saveRDS(petr_phylo, 
+        "Petrov_Species.rds")
+}else{
+  keep<-subset(reads, ReadsAccepted > 4500)$SampleID
+  petr_phylo <-prune_samples(keep, petr_phylo)
+  if(any(taxa_sums(petr_phylo) == 0)){
+    petr_phylo <- prune_taxa(taxa_sums(petr_phylo) > 0, petr_phylo)
+    }
+  saveRDS(petr_phylo, 
+        "Petrov_Species.rds")
+}
+
+```
+
+### Weis et al
+```{r Weis}
+# Load Species Count table
+weis<-read.delim("Species.txt", header = T, stringsAsFactors = F)
+row.names(weis)<-weis$Species
+weis<-weis[,-1]
+
+# Load Lotus mapping file
+map<-read.delim("Weis_et_al_mapping.txt", header = T, stringsAsFactors = F)
+names(map)[1]<-"SampleID"
+
+# Check that the samples order is the same in count table and mapping file
+weis<-weis[,order(colnames(weis))]
+map<-map[order(map$SampleID),]
+all(colnames(weis) == map$SampleID)
+
+# Create phyloseq object
+rownames(map)<-map$SampleID
+map<-map[,-1]
+weis_phylo <- phyloseq(otu_table(as.matrix(weis), taxa_are_rows = T), 
+                        sample_data(map))
+
+# Remove taxa that have < 5 counts in < 2.5% taxa
+wh0 <- genefilter_sample(weis_phylo, filterfun_sample(function(x) x > 5), A=0.025*nsamples(weis_phylo))
+weis_phylo <- prune_taxa(wh0, weis_phylo)
+
+# Check whether there are taxa in >= 90% samples
+df<-as.data.frame(otu_table(weis_phylo))
+df[df>=1]<-1
+if(length(rowSums(df)[rowSums(df) >= 0.9*ncol(df)]) >1){
+  print("There are taxa in >90% of samples")
+  length(rowSums(df)[rowSums(df) >= 0.9*ncol(df)])
+}else{stop("Something is wrong here, there are not taxa present in > 90% samples")}
+
+# Remove samples with < 4500 reads
+reads<-read.delim("demulti.acceptsPerSample.log", header = T, stringsAsFactors = F)
+
+if(nrow(subset(reads, ReadsAccepted < 4500)) == 0){
+  saveRDS(weis_phylo, 
+        "Weis_Species.rds")
+}else{
+  keep<-subset(reads, ReadsAccepted > 4500)$SampleID
+  weis_phylo <-prune_samples(keep, weis_phylo)
+  if(any(taxa_sums(weis_phylo) == 0)){
+    weis_phylo <- prune_taxa(taxa_sums(weis_phylo) > 0, weis_phylo)
+    }
+  saveRDS(weis_phylo, 
+        "Weis_Species.rds")
+}
+```
+
+### Scheperjans et al and Aho et al
+```{r Scheperjans-Aho}
+# Load Species Count table
+sa<-read.delim("Species.txt", header = T, stringsAsFactors = F)
+row.names(sa)<-sa$Species
+sa<-sa[,-1]
+
+# Load Lotus mapping file
+map<-read.delim("Scheperjans_Aho_et_al_mapping.txt", header = T, stringsAsFactors = F)
+names(map)[1]<-"SampleID"
+
+# Check that the samples order is the same in count table and mapping file
+sa<-sa[,order(colnames(sa))]
+map<-map[order(map$SampleID),]
+all(colnames(sa) == map$SampleID)
+
+# Create phyloseq object
+rownames(map)<-map$SampleID
+map<-map[,-1]
+sa_phylo <- phyloseq(otu_table(as.matrix(sa), taxa_are_rows = T), 
+                        sample_data(map))
+
+# Remove taxa that have < 5 counts in < 2.5% taxa
+wh0 <- genefilter_sample(sa_phylo, filterfun_sample(function(x) x > 5), A=0.025*nsamples(sa_phylo))
+sa_phylo <- prune_taxa(wh0, sa_phylo)
+
+# Look at the number of PD and HC samples
+sum(get_variable(hop_phylo)$Status == "Parkinson") 
+sum(get_variable(hop_phylo)$Status == "Control") 
+
+
+# Check whether there are taxa in >= 90% samples
+df<-as.data.frame(otu_table(sa_phylo))
+df[df>=1]<-1
+if(length(rowSums(df)[rowSums(df) >= 0.9*ncol(df)]) >1){
+  print("There are taxa in >90% of samples")
+  length(rowSums(df)[rowSums(df) >= 0.9*ncol(df)])
+}else{stop("Something is wrong here, there are not taxa present in > 90% samples")}
+
+
+# Remove samples with < 4500 reads
+reads<-read.delim("demulti.acceptsPerSample.log", header = T, stringsAsFactors = F)
+
+if(nrow(subset(reads, Read1Accepted < 4500)) == 0){
+  saveRDS(sa_phylo, 
+        "Scheperjans_Aho_Species.rds")
+}else{
+  keep<-subset(reads, Read1Accepted > 4500)$SampleID
+  sa_phylo <-prune_samples(keep, sa_phylo)
+  if(any(taxa_sums(sa_phylo) == 0)){
+    sa_phylo <- prune_taxa(taxa_sums(sa_phylo) > 0, sa_phylo)
+    }
+  saveRDS(sa_phylo, 
+        "Scheperjans_Aho_Species.rds")
+}
+```
+
+### Hopfner et al
+```{r Hopfner}
+# Load Species Count table
+hop<-read.delim("Species.txt", header = T, stringsAsFactors = F)
+row.names(hop)<-hop$Species
+hop<-hop[,-1]
+
+# Load Lotus mapping file
+map<-read.delim("Hopfner_et_al_mapping.txt", header = T, stringsAsFactors = F)
+names(map)[1]<-"SampleID"
+
+# Check that the samples order is the same in count table and mapping file
+hop<-hop[,order(colnames(hop))]
+map<-map[order(map$SampleID),]
+all(colnames(hop) == map$SampleID)
+
+# Create phyloseq object
+rownames(map)<-map$SampleID
+map<-map[,-1]
+hop_phylo <- phyloseq(otu_table(as.matrix(hop), taxa_are_rows = T), 
+                        sample_data(map))
+
+# Remove taxa that have < 5 counts in < 2.5% taxa
+wh0 <- genefilter_sample(hop_phylo, filterfun_sample(function(x) x > 5), A=0.025*nsamples(hop_phylo))
+hop_phylo <- prune_taxa(wh0, hop_phylo)
+
+# Check whether there are taxa in >= 90% samples
+df<-as.data.frame(otu_table(hop_phylo))
+df[df>=1]<-1
+if(length(rowSums(df)[rowSums(df) >= 0.9*ncol(df)]) >1){
+  print("There are taxa in >90% of samples")
+  length(rowSums(df)[rowSums(df) >= 0.9*ncol(df)])
+}else{stop("Something is wrong here, there are not taxa present in > 90% samples")}
+
+# Look at the number of PD and HC samples
+sum(get_variable(hop_phylo)$Status == "Parkinson") 
+sum(get_variable(hop_phylo)$Status == "Control") 
+
+# Remove samples with < 4500 reads
+reads<-read.delim("demulti.acceptsPerSample.log", header = T, stringsAsFactors = F)
+
+if(nrow(subset(reads, Read1Accepted < 4500)) == 0){
+  saveRDS(hop_phylo, 
+        "Hopfner_Species.rds")
+}else{
+  keep<-subset(reads, Read1Accepted > 4500)$SampleID
+  hop_phylo <-prune_samples(keep, hop_phylo)
+  if(any(taxa_sums(hop_phylo) == 0)){
+    hop_phylo <- prune_taxa(taxa_sums(hop_phylo) > 0, hop_phylo)
+    }
+  saveRDS(hop_phylo, 
+        "Hopfner_Species.rds")
+}
+
+```
+
+
+### Keshavarzian et al
+```{r Keshavarzian}
+# Load Species Count table
+kes<-read.delim("Species.txt", header = T, stringsAsFactors = F)
+row.names(kes)<-kes$Species
+kes<-kes[,-1]
+
+# Load Lotus mapping file
+map<-read.delim("Keshavarz_et_al_mapping.txt", header = T, stringsAsFactors = F)
+names(map)[1]<-"SampleID"
+
+# Check that the samples order is the same in count table and mapping file
+kes<-kes[,order(colnames(kes))]
+map<-map[order(map$SampleID),]
+all(colnames(kes) == map$SampleID)
+
+# Create phyloseq object
+rownames(map)<-map$SampleID
+map<-map[,-1]
+kes_phylo <- phyloseq(otu_table(as.matrix(kes), taxa_are_rows = T), 
+                        sample_data(map))
+
+# Remove taxa that have < 5 counts in < 2.5% taxa
+wh0 <- genefilter_sample(kes_phylo, filterfun_sample(function(x) x > 5), A=0.025*nsamples(kes_phylo))
+kes_phylo <- prune_taxa(wh0, kes_phylo)
+
+# Check whether there are taxa in >= 90% samples
+df<-as.data.frame(otu_table(kes_phylo))
+df[df>=1]<-1
+if(length(rowSums(df)[rowSums(df) >= 0.9*ncol(df)]) >1){
+  print("There are taxa in >90% of samples")
+  length(rowSums(df)[rowSums(df) >= 0.9*ncol(df)])
+}else{stop("Something is wrong here, there are not taxa present in > 90% samples")}
+
+# Look at hte number of PD and HC samples
+
+sum(get_variable(kes_phylo)$Description == "Parkinson") 
+sum(get_variable(kes_phylo)$Description == "Control") 
+
+# Remove samples with < 4500 reads
+reads<-read.delim("demulti.acceptsPerSample.log", header = T, stringsAsFactors = F)
+
+if(nrow(subset(reads, Read1Accepted < 4500)) == 0){
+  saveRDS(kes_phylo, 
+        "Keshavarz_Species.rds")
+}else{
+  keep<-subset(reads, Read1Accepted > 4500)$SampleID
+  kes_phylo <-prune_samples(keep, kes_phylo)
+  if(any(taxa_sums(kes_phylo) == 0)){
+    kes_phylo <- prune_taxa(taxa_sums(kes_phylo) > 0, kes_phylo)
+    }
+  saveRDS(kes_phylo, 
+        "Keshavarz_Species.rds")
+}
+```
+
+### Create a combined dataset
+```{r, Combined dataset}
+# Create Scheperjans and Aho separate datasets
+sch_base<-subset_samples(sa_phylo, row.names(sample_data(sa_phylo)) %in% sample_names(sa_phylo)[grepl("baseline", sample_names(sa_phylo))])
+aho_foll<-subset_samples(sa_phylo, row.names(sample_data(sa_phylo)) %in% sample_names(sa_phylo)[grepl("followup", sample_names(sa_phylo))])
+
+# Look at the number of PD and HC samples in Aho et al baseline and followup datsets
+
+sum(get_variable(sch_base)$Parkinson == "Parkinson") 
+sum(get_variable(sch_base)$Parkinson == "Control") 
+
+sum(get_variable(aho_foll)$Parkinson == "Parkinson") 
+sum(get_variable(aho_foll)$Parkinson == "Control") 
+
+
+# Check num are 1211
+nsamples(pietr_phylo) + nsamples(qian_phylo) + nsamples(hb_phylo) + nsamples(heinz_phylo) + 
+  nsamples(petr_phylo) + nsamples(weis_phylo) + nsamples(sch_base) + nsamples(aho_foll) + nsamples(hop_phylo) +
+  nsamples(kes_phylo)
+
+# Standardize the formatting of the mapping files
+map_schaho<-sample_data(sa_phylo)[,"Parkinson"]
+map_sch<-map_schaho[grepl("baseline", rownames(map_schaho)),]
+map_sch$study<-rep("Scheperjans", nrow(map_sch))
+names(map_sch)<-c("status", "study")
+
+map_aho<-map_schaho[grepl("followup", rownames(map_schaho)),]
+map_aho$study<-rep("Aho", nrow(map_aho))
+names(map_aho)<-c("status", "study")
+
+map_pietr<-sample_data(pietr_phylo)
+map_pietr_1<-map_pietr[, "host_phenotype"]
+map_pietr_1$Study<-rep("Pietrucci", nrow(map_pietr_1))
+names(map_pietr_1)<-c("status", "study")
+
+map_qian<-sample_data(qian_phylo)
+map_qian_1<-map_qian[, "status"]
+map_qian_1$Study<-rep("Qian", nrow(map_qian_1))
+names(map_qian_1)<-c("status", "study")
+
+map_hillb<-sample_data(hb_phylo)
+map_hillb_1<-map_hillb[, "Parkinson"]
+map_hillb_1$Study<-rep("Hill-Burns", nrow(map_hillb_1))
+names(map_hillb_1)<-c("status", "study")
+
+map_heinz<-sample_data(heinz_phylo)
+map_heinz_1<-map_heinz[, "Status"]
+map_heinz_1$Study<-rep("Heintz-Buschart", nrow(map_heinz_1))
+names(map_heinz_1)<-c("status", "study")
+
+map_petrov<-sample_data(petr_phylo)
+map_petrov_1<-map_petrov[, "diagnosis"]
+map_petrov_1$Study<-rep("Petrov", nrow(map_petrov_1))
+names(map_petrov_1)<-c("status", "study")
+
+map_weis<-sample_data(weis_phylo)
+x<-rownames(map_weis)
+for(i in 1:length(x)){
+  if(grepl("mK", x[i])){
+    x[i]<-"Control"
+  }else{
+      x[i]<-"Parkinson"
+  }
+}
+
+map_weis_1<-data.frame(status = x, study = rep("Weis", nrow(map_weis)))
+rownames(map_weis_1)<-sample_names(weis_phylo)
+names(map_weis_1)<-c("status", "study")
+
+# Calculate number of samples for Weis
+
+sum(map_weis_1$status == "Parkinson")
+sum(map_weis_1$status == "Control")
+
+map_hop<-sample_data(hop_phylo)
+map_hop_1<-map_hop[, "Status"]
+map_hop_1$Study<-rep("Hopfner", nrow(map_hop_1))
+names(map_hop_1)<-c("status", "study")
+
+map_kev<-sample_data(kes_phylo)
+map_kev_1<-map_kev[, "Description"]
+map_kev_1$Study<-rep("Keshavarzian", nrow(map_kev_1))
+names(map_kev_1)<-c("status", "study")
+
+map_combined<-rbind.data.frame(map_heinz_1, map_hillb_1, map_petrov_1, map_weis_1, map_pietr_1, 
+                               map_qian_1, map_sch, map_aho, map_hop_1, map_kev_1)
+
+# Check whether there are any duplicate samples in the map
+if(nrow(map_combined[duplicated(rownames(map_combined))]) == 0){
+  stop("Formatting of the mapping files was not done correctly")
+}else{print("Formatting of the mapping files was done correctly")}
+
+# Marging count table to creare a combined (pooled) dataset
+d_heinz<-otu_table(heinz_phylo)
+d_pietr<-otu_table(pietr_phylo)
+d_petrov<-otu_table(petr_phylo)
+d_qian<-otu_table(qian_phylo)
+d_sch<-otu_table(sch_base)
+d_aho<-otu_table(aho_foll)
+d_kev<-otu_table(kes_phylo)
+d_weis<-otu_table(weis_phylo)
+d_hop<-otu_table(hop_phylo)
+d_hill<-otu_table(hb_phylo)
+
+# Check that the number of samples is correct (1211) and there are no duplicates
+sum(nsamples(d_hill), nsamples(d_heinz), nsamples(d_pietr), nsamples(d_petrov),
+    nsamples(d_qian), nsamples(d_sch), nsamples(d_aho), nsamples(d_kev), nsamples(d_weis),
+    nsamples(d_hop))
+
+nsam<-(c(sample_names(d_hill), sample_names(d_heinz), sample_names(d_pietr), sample_names(d_petrov),
+         sample_names(d_qian), sample_names(d_sch), sample_names(d_aho), sample_names(d_kev), sample_names(d_weis),
+         sample_names(d_hop)))
+if(sum(duplicated(nsam)) != 0){
+  stop("Formatting of the mapping files was not done correctly")
+}else{print("Formatting of the mapping files was done correctly")}
+
+# Merging the count tables
+hh<-merge(d_hill, d_heinz, by = 0, all = T)
+row.names(hh)<-hh$Row.names
+hhp<-merge(hh[,-1], d_pietr, by = 0, all = T)
+row.names(hhp)<-hhp$Row.names
+p<-merge(hhp[,-1], d_petrov, by = 0, all = T)
+row.names(p)<-p$Row.names
+q<-merge(p[,-1], d_qian, by = 0, all = T)
+row.names(q)<-q$Row.names
+s<-merge(q[,-1], d_sch, by = 0, all = T)
+row.names(s)<-s$Row.names
+sk<-merge(s[,-1], d_kev, by = 0, all = T)
+row.names(sk)<-sk$Row.names
+skw<-merge(sk[,-1], d_weis, by = 0, all = T)
+row.names(skw)<-skw$Row.names
+skwa<-merge(skw[,-1], d_aho, by = 0, all = T)
+row.names(skwa)<-skwa$Row.names
+d_comb<-merge(skwa[,-1], d_hop, by = 0, all = T)
+row.names(d_comb)<-d_comb$Row.names
+d_comb<-d_comb[,-1] 
+# Check that the number of samples is correct (1211)
+ncol(d_comb)
+
+# Change NA in 0, format otu_tab and sample_data in the same order of samples, create phyloseq object
+d_comb[is.na(d_comb)]<-0
+
+d_comb<-d_comb[, order(names(d_comb))]
+map_combined<-map_combined[order(rownames(map_combined)),]
+all(names(d_comb) == rownames(map_combined))
+
+map_combined$study<-as.factor(map_combined$study)
+d_phylo_com_count<-phyloseq(otu_table(d_comb, taxa_are_rows = T), sample_data(map_combined))
+
+# Create a list of phyloseq objects
+l_phylo<-list(pietr_phylo, qian_phylo, 
+              hb_phylo, heinz_phylo, 
+              petr_phylo, weis_phylo, 
+              sch_base, aho_foll, 
+              hop_phylo, kes_phylo, 
+              d_phylo_com_count)
+names(l_phylo)<-c("Pietrucci", "Qian", "Hill-Burns", "Heintz-Buschart", "Petrov", "Weis", "Scheperjans", 
+                  "Aho", "Hopfner","Keshavarzian", "Combined")
+
+# Create a list of maps and update the current mapping files of the phyloseq object in the list
+l_maps<-list(map_pietr_1, map_qian_1, map_hillb_1, map_heinz_1, map_petrov_1, map_weis_1, map_sch, map_aho, 
+             map_hop_1, map_kev_1, map_combined)
+names(l_maps)<-names(l_phylo)
+
+for(i in 1:length(l_maps)){
+  if(all(rownames(sample_data(l_phylo[[i]])) == rownames(l_maps[[i]]))){
+    sample_data(l_phylo[[i]])<-sample_data(l_maps[[i]])
+  }else{stop("Order of samples is different! Re-order the phyloseq samples and the mapping file")}
+}
+
+saveRDS(l_maps,
+        "Formatted_maps.rds")
+saveRDS(l_phylo, 
+        "Phyloseq_list_all_studies.rds")
+```

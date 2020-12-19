@@ -1,0 +1,409 @@
+---
+title: "Test effect of technical factors on community structure"
+author: "Stefano Romano"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+# Before you begin:
+
+These scripts were tailored for the analyses we conducted. They are not meant to be used in other contexts and are reported here as a detailed extension of the method section of our article. Please, use them at your own risk.
+
+If you use any of the material or approaches in these scripts, please, cite:
+Romano et al, 2020, *Meta-analysis of the Parkinson’s disease gut microbiome suggests alterations linked to intestinal inflammation*
+
+Thank you!
+
+```{R}
+# Load packeages
+list.of.packages <- c("ggplot2", "dplyr", "reshape2",  "devtools", "ggpubr", "vegan")
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages)
+
+if (!requireNamespace("BiocManager", quietly = TRUE)){
+  install.packages("BiocManager")}
+
+
+list.of.bioc <- c("DESeq2", "phyloseq", "grDevices")
+new.packages <- list.of.bioc[!(list.of.bioc %in% installed.packages()[,"Package"])]
+if(length(new.packages)) BiocManager::install(new.packages)
+
+
+library(phyloseq)
+library(ggpubr)
+library(vegan)
+library(ggplot2)
+library(reshape2)
+library(dplyr)
+library(microbiome) 
+library(grDevices)
+library(devtools)
+```
+
+# Overview of the analyses
+
+Run additional dbRDA using as constrains study-specific technical factors
+Please, provide the full path for the files and R objects you need to load.
+
+# Proportions (TSS)
+```{R}
+load("Species_proportions_workspace.RData")
+set.seed(987)
+
+# Create confounders table
+comb<-l_prop$Combined
+meta_comb<-meta(comb)
+
+for(i in 1:nrow(meta_comb)){
+  if(meta_comb$study[i] == "Hill-Burns"){
+    meta_comb$country[i]<-"USA"
+    meta_comb$region[i]<-"V4"
+    meta_comb$ends[i]<-"SE"
+    meta_comb$seq[i]<-"MiSeq"
+    meta_comb$extr[i]<-"Ad_MOBIO_PowerMAG"
+    meta_comb$e_type[i]<-"mechanical"
+    
+  }else if(meta_comb$study[i] == "Pietrucci"){
+    meta_comb$country[i]<-"Italy"
+    meta_comb$region[i]<-"V3-V4"
+    meta_comb$ends[i]<-"PE"
+    meta_comb$seq[i]<-"MiSeq"
+    meta_comb$extr[i]<-"PSP_Spin_Stoll"
+    meta_comb$e_type[i]<-"mechanical"
+    
+    
+  }else if(meta_comb$study[i] == "Hopfner"){
+    meta_comb$country[i]<-"Germany"
+    meta_comb$region[i]<-"V1-V2"
+    meta_comb$ends[i]<-"PE"
+    meta_comb$seq[i]<-"MiSeq"
+    meta_comb$extr[i]<-"PowerSoil"
+    meta_comb$e_type[i]<-"mechanical"
+    
+  }else if(meta_comb$study[i] == "Keshavarzian"){
+    meta_comb$country[i]<-"USA"
+    meta_comb$region[i]<-"V4"
+    meta_comb$ends[i]<-"SE"
+    meta_comb$seq[i]<-"MiSeq"
+    meta_comb$extr[i]<-"FastDNA"
+    meta_comb$e_type[i]<-"mechanical"
+    
+  }else if(meta_comb$study[i] == "Petrov"){
+    meta_comb$country[i]<-"Russia"
+    meta_comb$region[i]<-"V3-V4"
+    meta_comb$ends[i]<-"SE"
+    meta_comb$seq[i]<-"MiSeq"
+    meta_comb$extr[i]<-"Home_made"
+    meta_comb$e_type[i]<-"mechanical"
+    
+  }else if(meta_comb$study[i] == "Qian"){
+    meta_comb$country[i]<-"China"
+    meta_comb$region[i]<-"V3-V4"
+    meta_comb$ends[i]<-"PE"
+    meta_comb$seq[i]<-"MiSeq"
+    meta_comb$extr[i]<-"QIAmp_DNA"
+    meta_comb$e_type[i]<-"chemical"
+    
+  }else if(meta_comb$study[i] == "Scheperjans"){
+    meta_comb$country[i]<-"Finland"
+    meta_comb$region[i]<-"V3-V4"
+    meta_comb$ends[i]<-"PE"
+    meta_comb$seq[i]<-"MiSeq"
+    meta_comb$extr[i]<-"PSP_Spin_Stoll"
+    meta_comb$e_type[i]<-"mechanical"
+    
+  }else if(meta_comb$study[i] == "Aho"){
+    meta_comb$country[i]<-"Finland"
+    meta_comb$region[i]<-"V3-V4"
+    meta_comb$ends[i]<-"PE"
+    meta_comb$seq[i]<-"MiSeq"
+    meta_comb$extr[i]<-"PSP_Spin_Stoll"
+    meta_comb$e_type[i]<-"mechanical"
+    
+  }else if(meta_comb$study[i] == "Heintz-Buschart"){
+    meta_comb$country[i]<-"Germany"
+    meta_comb$region[i]<-"V4"
+    meta_comb$ends[i]<-"PE"
+    meta_comb$seq[i]<-"MiSeq"
+    meta_comb$extr[i]<-"Mod_Allprep"
+    meta_comb$e_type[i]<-"mechanical"
+    
+  }else{
+    meta_comb$country[i]<-"Germany"
+    meta_comb$region[i]<-"V4-V5"
+    meta_comb$ends[i]<-"PE"
+    meta_comb$seq[i]<-"IonTorrent"
+    meta_comb$extr[i]<-"FastDNA"
+    meta_comb$e_type[i]<-"mechanical"
+    
+  }
+}
+meta_comb$country<-as.factor(meta_comb$country)
+meta_comb$region<-as.factor(meta_comb$region)
+meta_comb$ends<-as.factor(meta_comb$ends)
+meta_comb$seq<-as.factor(meta_comb$seq)
+sample_data(comb)<-sample_data(meta_comb)
+
+comb_jsd<-l_jsd$Combined
+
+l_dbRDA<-vector(mode = "list")
+
+l_dbRDA$seq<-ordinate(comb, method = "CAP", distance = comb_jsd, formula = comb ~ seq)
+l_dbRDA$ext<-ordinate(comb, method = "CAP", distance = comb_jsd, formula = comb ~ extr)
+l_dbRDA$e_type<-ordinate(comb, method = "CAP", distance = comb_jsd, formula = comb ~ e_type)
+l_dbRDA$end<-ordinate(comb, method = "CAP", distance = comb_jsd, formula = comb ~ ends)
+l_dbRDA$region<-ordinate(comb, method = "CAP", distance = comb_jsd, formula = comb ~ region)
+l_dbRDA$status<-ordinate(comb, method = "CAP", distance = comb_jsd, formula = comb ~ status)
+l_dbRDA$study<-ordinate(comb, method = "CAP", distance = comb_jsd, formula = comb ~ study)
+l_dbRDA$coun<-ordinate(comb, method = "CAP", distance = comb_jsd, formula = comb ~ country)
+l_dbRDA$all_status<-ordinate(comb, method = "CAP", distance = comb_jsd, formula = comb ~ seq + ends + region + country + extr + e_type + status)
+l_dbRDA$st_st<-ordinate(comb, method = "CAP", distance = comb_jsd, formula = comb ~ status + study)
+
+radj_p<-lapply(l_dbRDA, RsquareAdj)
+l_anova_p<-lapply(l_dbRDA, function(x) anova.cca(x, by = "margin"))
+```
+
+
+# VST
+
+```{R}
+load("04_Species_DESEQ_GMPR_workspace.RData")
+
+# Create confounders table
+comb<-l_phylo$Combined
+meta_comb<-meta(comb)
+
+for(i in 1:nrow(meta_comb)){
+  if(meta_comb$study[i] == "Hill-Burns"){
+    meta_comb$country[i]<-"USA"
+    meta_comb$region[i]<-"V4"
+    meta_comb$ends[i]<-"SE"
+    meta_comb$seq[i]<-"MiSeq"
+    meta_comb$extr[i]<-"Ad_MOBIO_PowerMAG"
+    meta_comb$e_type[i]<-"mechanical"
+    
+  }else if(meta_comb$study[i] == "Pietrucci"){
+    meta_comb$country[i]<-"Italy"
+    meta_comb$region[i]<-"V3-V4"
+    meta_comb$ends[i]<-"PE"
+    meta_comb$seq[i]<-"MiSeq"
+    meta_comb$extr[i]<-"PSP_Spin_Stoll"
+    meta_comb$e_type[i]<-"mechanical"
+    
+    
+  }else if(meta_comb$study[i] == "Hopfner"){
+    meta_comb$country[i]<-"Germany"
+    meta_comb$region[i]<-"V1-V2"
+    meta_comb$ends[i]<-"PE"
+    meta_comb$seq[i]<-"MiSeq"
+    meta_comb$extr[i]<-"PowerSoil"
+    meta_comb$e_type[i]<-"mechanical"
+    
+  }else if(meta_comb$study[i] == "Keshavarzian"){
+    meta_comb$country[i]<-"USA"
+    meta_comb$region[i]<-"V4"
+    meta_comb$ends[i]<-"SE"
+    meta_comb$seq[i]<-"MiSeq"
+    meta_comb$extr[i]<-"FastDNA"
+    meta_comb$e_type[i]<-"mechanical"
+    
+  }else if(meta_comb$study[i] == "Petrov"){
+    meta_comb$country[i]<-"Russia"
+    meta_comb$region[i]<-"V3-V4"
+    meta_comb$ends[i]<-"SE"
+    meta_comb$seq[i]<-"MiSeq"
+    meta_comb$extr[i]<-"Home_made"
+    meta_comb$e_type[i]<-"mechanical"
+    
+  }else if(meta_comb$study[i] == "Qian"){
+    meta_comb$country[i]<-"China"
+    meta_comb$region[i]<-"V3-V4"
+    meta_comb$ends[i]<-"PE"
+    meta_comb$seq[i]<-"MiSeq"
+    meta_comb$extr[i]<-"QIAmp_DNA"
+    meta_comb$e_type[i]<-"chemical"
+    
+  }else if(meta_comb$study[i] == "Scheperjans"){
+    meta_comb$country[i]<-"Finland"
+    meta_comb$region[i]<-"V3-V4"
+    meta_comb$ends[i]<-"PE"
+    meta_comb$seq[i]<-"MiSeq"
+    meta_comb$extr[i]<-"PSP_Spin_Stoll"
+    meta_comb$e_type[i]<-"mechanical"
+    
+  }else if(meta_comb$study[i] == "Aho"){
+    meta_comb$country[i]<-"Finland"
+    meta_comb$region[i]<-"V3-V4"
+    meta_comb$ends[i]<-"PE"
+    meta_comb$seq[i]<-"MiSeq"
+    meta_comb$extr[i]<-"PSP_Spin_Stoll"
+    meta_comb$e_type[i]<-"mechanical"
+    
+  }else if(meta_comb$study[i] == "Heintz-Buschart"){
+    meta_comb$country[i]<-"Germany"
+    meta_comb$region[i]<-"V4"
+    meta_comb$ends[i]<-"PE"
+    meta_comb$seq[i]<-"MiSeq"
+    meta_comb$extr[i]<-"Mod_Allprep"
+    meta_comb$e_type[i]<-"mechanical"
+    
+  }else{
+    meta_comb$country[i]<-"Germany"
+    meta_comb$region[i]<-"V4-V5"
+    meta_comb$ends[i]<-"PE"
+    meta_comb$seq[i]<-"IonTorrent"
+    meta_comb$extr[i]<-"FastDNA"
+    meta_comb$e_type[i]<-"mechanical"
+    
+  }
+}
+meta_comb$country<-as.factor(meta_comb$country)
+meta_comb$region<-as.factor(meta_comb$region)
+meta_comb$ends<-as.factor(meta_comb$ends)
+meta_comb$seq<-as.factor(meta_comb$seq)
+sample_data(comb)<-sample_data(meta_comb)
+
+comb_jsd<-l_euc$Combined
+
+l_dbRDA_d<-vector(mode = "list")
+
+
+
+l_dbRDA_d$seq<-ordinate(comb, method = "CAP", distance = comb_jsd, formula = comb ~ seq)
+l_dbRDA_d$ext<-ordinate(comb, method = "CAP", distance = comb_jsd, formula = comb ~ extr)
+l_dbRDA_d$e_type<-ordinate(comb, method = "CAP", distance = comb_jsd, formula = comb ~ e_type)
+l_dbRDA_d$end<-ordinate(comb, method = "CAP", distance = comb_jsd, formula = comb ~ ends)
+l_dbRDA_d$region<-ordinate(comb, method = "CAP", distance = comb_jsd, formula = comb ~ region)
+l_dbRDA_d$status<-ordinate(comb, method = "CAP", distance = comb_jsd, formula = comb ~ status)
+l_dbRDA_d$study<-ordinate(comb, method = "CAP", distance = comb_jsd, formula = comb ~ study)
+l_dbRDA_d$coun<-ordinate(comb, method = "CAP", distance = comb_jsd, formula = comb ~ country)
+l_dbRDA_d$all_status<-ordinate(comb, method = "CAP", distance = comb_jsd, formula = comb ~ seq + ends + region + country + extr + e_type + status)
+l_dbRDA_d$st_st<-ordinate(comb, method = "CAP", distance = comb_jsd, formula = comb ~ status + study)
+
+radj_d<-lapply(l_dbRDA_d, RsquareAdj)
+l_anova_d<-lapply(l_dbRDA_d, function(x) anova.cca(x, by = "margin"))
+```
+
+# CLR
+
+```{R}
+load("05a_Species_CLR_workspace.RData")
+
+# Create confounders table
+comb<-l_phylo$Combined
+meta_comb<-meta(comb)
+
+for(i in 1:nrow(meta_comb)){
+  if(meta_comb$study[i] == "Hill-Burns"){
+    meta_comb$country[i]<-"USA"
+    meta_comb$region[i]<-"V4"
+    meta_comb$ends[i]<-"SE"
+    meta_comb$seq[i]<-"MiSeq"
+    meta_comb$extr[i]<-"Ad_MOBIO_PowerMAG"
+    meta_comb$e_type[i]<-"mechanical"
+    
+  }else if(meta_comb$study[i] == "Pietrucci"){
+    meta_comb$country[i]<-"Italy"
+    meta_comb$region[i]<-"V3-V4"
+    meta_comb$ends[i]<-"PE"
+    meta_comb$seq[i]<-"MiSeq"
+    meta_comb$extr[i]<-"PSP_Spin_Stoll"
+    meta_comb$e_type[i]<-"mechanical"
+    
+    
+  }else if(meta_comb$study[i] == "Hopfner"){
+    meta_comb$country[i]<-"Germany"
+    meta_comb$region[i]<-"V1-V2"
+    meta_comb$ends[i]<-"PE"
+    meta_comb$seq[i]<-"MiSeq"
+    meta_comb$extr[i]<-"PowerSoil"
+    meta_comb$e_type[i]<-"mechanical"
+    
+  }else if(meta_comb$study[i] == "Keshavarzian"){
+    meta_comb$country[i]<-"USA"
+    meta_comb$region[i]<-"V4"
+    meta_comb$ends[i]<-"SE"
+    meta_comb$seq[i]<-"MiSeq"
+    meta_comb$extr[i]<-"FastDNA"
+    meta_comb$e_type[i]<-"mechanical"
+    
+  }else if(meta_comb$study[i] == "Petrov"){
+    meta_comb$country[i]<-"Russia"
+    meta_comb$region[i]<-"V3-V4"
+    meta_comb$ends[i]<-"SE"
+    meta_comb$seq[i]<-"MiSeq"
+    meta_comb$extr[i]<-"Home_made"
+    meta_comb$e_type[i]<-"mechanical"
+    
+  }else if(meta_comb$study[i] == "Qian"){
+    meta_comb$country[i]<-"China"
+    meta_comb$region[i]<-"V3-V4"
+    meta_comb$ends[i]<-"PE"
+    meta_comb$seq[i]<-"MiSeq"
+    meta_comb$extr[i]<-"QIAmp_DNA"
+    meta_comb$e_type[i]<-"chemical"
+    
+  }else if(meta_comb$study[i] == "Scheperjans"){
+    meta_comb$country[i]<-"Finland"
+    meta_comb$region[i]<-"V3-V4"
+    meta_comb$ends[i]<-"PE"
+    meta_comb$seq[i]<-"MiSeq"
+    meta_comb$extr[i]<-"PSP_Spin_Stoll"
+    meta_comb$e_type[i]<-"mechanical"
+    
+  }else if(meta_comb$study[i] == "Aho"){
+    meta_comb$country[i]<-"Finland"
+    meta_comb$region[i]<-"V3-V4"
+    meta_comb$ends[i]<-"PE"
+    meta_comb$seq[i]<-"MiSeq"
+    meta_comb$extr[i]<-"PSP_Spin_Stoll"
+    meta_comb$e_type[i]<-"mechanical"
+    
+  }else if(meta_comb$study[i] == "Heintz-Buschart"){
+    meta_comb$country[i]<-"Germany"
+    meta_comb$region[i]<-"V4"
+    meta_comb$ends[i]<-"PE"
+    meta_comb$seq[i]<-"MiSeq"
+    meta_comb$extr[i]<-"Mod_Allprep"
+    meta_comb$e_type[i]<-"mechanical"
+    
+  }else{
+    meta_comb$country[i]<-"Germany"
+    meta_comb$region[i]<-"V4-V5"
+    meta_comb$ends[i]<-"PE"
+    meta_comb$seq[i]<-"IonTorrent"
+    meta_comb$extr[i]<-"FastDNA"
+    meta_comb$e_type[i]<-"mechanical"
+    
+  }
+}
+meta_comb$country<-as.factor(meta_comb$country)
+meta_comb$region<-as.factor(meta_comb$region)
+meta_comb$ends<-as.factor(meta_comb$ends)
+meta_comb$seq<-as.factor(meta_comb$seq)
+sample_data(comb)<-sample_data(meta_comb)
+
+comb_jsd<-l_euc$Combined
+
+l_dbRDA_c<-vector(mode = "list")
+
+
+l_dbRDA_c$seq<-ordinate(comb, method = "CAP", distance = comb_jsd, formula = comb ~ seq)
+l_dbRDA_c$ext<-ordinate(comb, method = "CAP", distance = comb_jsd, formula = comb ~ extr)
+l_dbRDA_c$e_type<-ordinate(comb, method = "CAP", distance = comb_jsd, formula = comb ~ e_type)
+l_dbRDA_c$end<-ordinate(comb, method = "CAP", distance = comb_jsd, formula = comb ~ ends)
+l_dbRDA_c$region<-ordinate(comb, method = "CAP", distance = comb_jsd, formula = comb ~ region)
+l_dbRDA_c$status<-ordinate(comb, method = "CAP", distance = comb_jsd, formula = comb ~ status)
+l_dbRDA_c$study<-ordinate(comb, method = "CAP", distance = comb_jsd, formula = comb ~ study)
+l_dbRDA_c$coun<-ordinate(comb, method = "CAP", distance = comb_jsd, formula = comb ~ country)
+l_dbRDA_c$all_status<-ordinate(comb, method = "CAP", distance = comb_jsd, formula = comb ~ seq + ends + region + country + extr + e_type + status)
+l_dbRDA_c$st_st<-ordinate(comb, method = "CAP", distance = comb_jsd, formula = comb ~ status + study)
+
+radj_cl<-lapply(l_dbRDA_c, RsquareAdj)
+l_anova_cl<-lapply(l_dbRDA_c, function(x) anova.cca(x, by = "margin"))
+```
+
+# Save workspae
+```{R}
+save.image("10_Confounders_species.RData")
+```

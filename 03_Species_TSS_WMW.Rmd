@@ -1,0 +1,652 @@
+---
+title: "TSS_Beta_DA"
+author: "Stefano Romano"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+# Before you begin:
+
+These scripts were tailored for the analyses we conducted. They are not meant to be used in other contexts and are reported here as a detailed extension of the method section of our article. Please, use them at your own risk.
+
+If you use any of the material or approaches in these scripts, please, cite:
+Romano et al, 2020, *Meta-analysis of the Parkinson’s disease gut microbiome suggests alterations linked to intestinal inflammation*
+
+Thank you!
+
+# Load the needed packages
+```{r, message=F}
+list.of.packages <- c("ggplot2", "dplyr", "reshape2", "coin", "propr", "devtools", "ggpubr", "vegan", "ggrepel")
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages)
+
+if (!requireNamespace("BiocManager", quietly = TRUE)){
+  install.packages("BiocManager")}
+
+
+list.of.bioc <- c("phyloseq", "grDevices", "microbiome")
+new.packages <- list.of.bioc[!(list.of.bioc %in% installed.packages()[,"Package"])]
+if(length(new.packages)) BiocManager::install(new.packages)
+
+
+library(phyloseq)
+library(microbiome)
+library(ggpubr)
+library(ggplot2)
+library(reshape2)
+library(coin)
+library(grDevices)
+library(vegan)
+library(devtools)
+library(ggrepel)
+```
+
+# Overview of the analyses
+We will first verify the effect of disease status and study on the microbial community structure.
+Then we will perform a differential abundance analysis using WMW test.
+Please provide the full path to the files and R objects that need to be loaded.
+
+## Load the list pf phyloseq objects
+```{r setup, message=FALSE}
+l_phylo<-readRDS("Phyloseq_list_all_studies.rds")
+```
+
+## Load rarefied data
+```{r, message=F}
+l_rar<-readRDS("raref_list_all_studies.rds")
+# Create proportions and then combine the data. This does not have to be done for the other approaches (i.e. VST, CLR) as data have been already combined before.
+l_prop<-lapply(l_rar, function(x) transform_sample_counts(x, function(x){x / sum(x)})) 
+
+# Merging the count tables
+hh<-merge(as.data.frame(otu_table(l_prop$`Hill-Burns`)), as.data.frame(otu_table(l_prop$`Heintz-Buschart`)), by = 0, all = T)
+row.names(hh)<-hh$Row.names
+hhp<-merge(hh[,-1], as.data.frame(otu_table(l_prop$Pietrucci)), by = 0, all = T)
+row.names(hhp)<-hhp$Row.names
+p<-merge(hhp[,-1], as.data.frame(otu_table(l_prop$Petrov)), by = 0, all = T)
+row.names(p)<-p$Row.names
+q<-merge(p[,-1], as.data.frame(otu_table(l_prop$Qian)), by = 0, all = T)
+row.names(q)<-q$Row.names
+s<-merge(q[,-1], as.data.frame(otu_table(l_prop$Scheperjans)), by = 0, all = T)
+row.names(s)<-s$Row.names
+sk<-merge(s[,-1], as.data.frame(otu_table(l_prop$Keshavarzian)), by = 0, all = T)
+row.names(sk)<-sk$Row.names
+skw<-merge(sk[,-1], as.data.frame(otu_table(l_prop$Weis)), by = 0, all = T)
+row.names(skw)<-skw$Row.names
+skwa<-merge(skw[,-1], as.data.frame(otu_table(l_prop$Aho)), by = 0, all = T)
+row.names(skwa)<-skwa$Row.names
+d_comb<-merge(skwa[,-1], as.data.frame(otu_table(l_prop$Hopfner)), by = 0, all = T)
+row.names(d_comb)<-d_comb$Row.names
+d_comb<-d_comb[,-1] 
+d_comb[is.na(d_comb)]<-0
+
+d_comb<-d_comb[,order(names(d_comb))]
+
+all(rownames(sample_data(l_prop$Combined)) == names(d_comb))
+otu_table(l_prop$Combined)<-otu_table(d_comb, taxa_are_rows = T)
+
+# Get the number of samples after rarefying
+lapply(l_prop, function(x) {
+  p<-sum(get_variable(x)$status == "Parkinson") 
+  c<-sum(get_variable(x)$status == "Control") 
+  return(c(p,c))
+}
+)
+# Save l_prop object
+saveRDS(l_prop, "List_prop_species.rds")
+
+```
+
+## Calculate JSD and Bray-curtys indices
+```{r, message=F}
+set.seed(987)
+
+# Calculate indices 
+l_bray<-lapply(l_prop, function(x) phyloseq::distance(x, method= "bray", na.rm = F))
+l_jsd<-lapply(l_prop, function(x) phyloseq::distance(x, method= "jsd", na.rm=F))
+
+# Calculate adonis (PERMANOVA)
+l_adonis_b<-l_bray
+names(l_adonis_b)<-names(l_rar)
+for(i in 1:length(l_bray)){
+  l_adonis_b[[i]]<-adonis2(l_bray[[i]] ~ status, data = meta(l_prop[[i]]))
+  
+}
+# Format ADONIS results
+l_adonis_j<-l_jsd
+names(l_adonis_j)<-names(l_rar)
+for(i in 1:length(l_bray)){
+  l_adonis_j[[i]]<-adonis2(l_jsd[[i]] ~ status, data = meta(l_prop[[i]]))
+}
+adonis_df_b<-data.frame(matrix(nrow = length(l_adonis_b), ncol = 4))
+for(i in 1:length(l_bray)){
+  adonis_df_b[i,]<- c(names(l_adonis_b)[i], l_adonis_b[[i]]$R2[1], l_adonis_b[[i]]$`Pr(>F)`[1], "Bray_prop")
+}
+adonis_df_jsd<-data.frame(matrix(nrow = length(l_adonis_b), ncol = 4))
+for(i in 1:length(l_bray)){
+  adonis_df_jsd[i,]<- c(names(l_adonis_j)[i], l_adonis_j[[i]]$R2[1], l_adonis_j[[i]]$`Pr(>F)`[1], "JSD_prop")
+}
+adonis_df<-rbind.data.frame(adonis_df_b, adonis_df_jsd)
+names(adonis_df)<-c("Study", "R2", "pvalue", "Index")
+
+for(i in 1:nrow(adonis_df)){
+  if(adonis_df$pvalue[i] < 0.1 & adonis_df$pvalue[i] > 0.05){
+    adonis_df$Significant[i]<-"Significant [0.05<p<0.1]"
+  } else if (adonis_df$pvalue[i] < 0.05){
+    adonis_df$Significant[i]<-"Significant [p<0.05]"
+  } else {adonis_df$Significant[i]<-"Not_significant"
+  }
+}
+
+adonis_df$Significant<-as.factor(adonis_df$Significant)
+adonis_df$R2<-round(as.numeric(adonis_df$R2)*100, digits = 1)
+
+# Save the results to create a plot in a separate script
+saveRDS(adonis_df, "Adonis_species_prop.rds")
+
+# Check the marginal effect of study and disease status
+donis_com_jsd_m<-adonis2(l_jsd$Combined ~ study + status, data = meta(l_prop$Combined), by = "margin")
+adonis_com_bray_m<-adonis2(l_bray$Combined ~ study + status, data = meta(l_prop$Combined), by = "margin")
+
+```
+
+
+## Perform constrained analyses
+```{r, message=FALSE}
+
+l_dbRDA_sp<-vector(mode = "list", length = 3)
+l_dbRDA_sp[[1]]<-ordinate(l_prop[["Combined"]], method = "CAP", distance = l_jsd[["Combined"]], formula = l_prop[["Combined"]] ~ 1 )
+l_dbRDA_sp[[2]]<-ordinate(l_prop[["Combined"]], method = "CAP", distance = l_jsd[["Combined"]], formula = l_prop[["Combined"]] ~ 1  + Condition(study))
+l_dbRDA_sp[[3]]<-ordinate(l_prop[["Combined"]], method = "CAP", distance = l_jsd[["Combined"]], formula = l_prop[["Combined"]] ~  status + Condition(study))
+
+names(l_dbRDA_sp)<-c("Unconstrained", "Blocked", "Blocked_constrained")
+l_dbRDA_sp_plots<-lapply(l_dbRDA_sp, function(x) plot_ordination(l_prop[["Combined"]], x, 
+                "samples", color="status", shape = "study") +
+                theme_bw() +
+                scale_shape_manual(values=c(2,5,6,11,17,0,19,7,8,4)) +
+                scale_colour_manual(values=c("#999999", "#E69F00")) +
+                geom_point(size = 2.5) +
+                labs(color = "Status", shape = "Study") +
+                theme(legend.title = element_text(size = 12, face = "bold"),
+                      legend.text = element_text(size = 12))) 
+              
+                
+g<-ggarrange(plotlist = l_dbRDA_sp_plots, common.legend = T, font.label = list(size = 10), label.x = 0.15, label.y = 0.975, ncol = 3,
+             labels = c("a: Unconstrained", "b: Blocked by study", "c: Blocked by study constrained by condition"),
+             hjust = c(0,0,0), legend = "bottom") 
+
+g_species<-annotate_figure(g, top = text_grob("Species", size = 12, face = "bold"))
+
+# Save RDS
+saveRDS(g_species, "dbRDA_species_propr.rds")
+```
+
+## Perform EnvFit and plot species driving the CAP1
+
+```{r, message=F}
+otu_tab<-as.data.frame(t(otu_table(l_prop$Combined)))
+sf <- envfit(l_dbRDA_sp[[3]], otu_tab, display = "lc") # species correlations -> from here We need to get the score for the plotting
+# Save the resutls as the calculation is really computationally intensive
+saveRDS(sf, "Envfit_dbRDA_species_prop.rds")
+
+# Get the scores for plotting
+vec.sp.df.scores<-as.data.frame(scores(sf, display = "vector"))
+ef.df<-as.data.frame(sf$vectors$arrows*sqrt(sf$vectors$r))
+ef.df$species<-rownames(ef.df)
+
+# Collecting only species with significant pvalues
+A <- as.list(sf$vectors)
+pvals<-as.data.frame(A$pvals)
+arrows<-as.data.frame(A$arrows*sqrt(A$r))
+C<-cbind(arrows, pvals)
+Cred<-subset(C,pvals<0.01)
+Cred <- cbind(Cred, Species = rownames(Cred))
+
+# Collect only species that have the highest degree of variation along CAP1 (> |0.095|)
+cap1<-subset(Cred, CAP1 >= 0.095 | CAP1 <= -0.095 )
+
+# Plot species on JSD dbRDA
+pl_sp<-l_dbRDA_sp_plots[[3]] 
+cap1$Species<-as.character(cap1$Species)
+
+# Make taxa names short
+taxa<-cap1$Species
+shortaxa<-vector(length = length(taxa))
+for(i in 1:length(shortaxa)){
+  shortaxa[i]<-paste(strsplit(taxa[i], split = ";")[[1]][6], 
+                     strsplit(taxa[i], split = ";")[[1]][7], sep = "_")
+}
+cap1$Species<-shortaxa
+
+# Modify the names os they can be read easily in the plot
+cap1[which(rownames(cap1) == "Bacteria;Firmicutes;Clostridia;Lachnospirales;Lachnospiraceae;?;?"),]$Species <- "Lachnospiraceae sp"
+cap1[which(rownames(cap1) == "Bacteria;Firmicutes;Clostridia;Oscillospirales;[Clostridium] methylpentosum group;?;?"),]$Species <- "Clostridium methylpentosum group sp"
+cap1[which(rownames(cap1) == "Bacteria;Firmicutes;Clostridia;Oscillospirales;Oscillospiraceae;UCG-005;gut metagenome"),]$Species <- "Oscillospiraceae UCG-005 sp"
+cap1[which(rownames(cap1) == "Bacteria;Verrucomicrobiota;Verrucomicrobiae;Verrucomicrobiales;Akkermansiaceae;Akkermansia;Akkermansia muciniphila"),]$Species <- "Akkermansia muciniphila"
+cap1[which(rownames(cap1) == "Bacteria;Firmicutes;Clostridia;Lachnospirales;Lachnospiraceae;Fusicatenibacter;uncultured organism"),]$Species <- "Fusicatenibacter sp"
+cap1[which(rownames(cap1) == "Bacteria;Firmicutes;Clostridia;Oscillospirales;Ruminococcaceae;[Eubacterium] siraeum group;gut metagenome"),]$Species <- "Eubacterium siraeum group sp"
+cap1[which(rownames(cap1) == "Bacteria;Firmicutes;Clostridia;Lachnospirales;Lachnospiraceae;Roseburia;uncultured organism"),]$Species <- "Roseburia sp (b)"
+cap1[which(rownames(cap1) == "Bacteria;Firmicutes;Clostridia;Christensenellales;Christensenellaceae;Christensenellaceae R-7 group;?"),]$Species <- "Christensenellaceae R-7 group sp"
+cap1[which(rownames(cap1) == "Bacteria;Actinobacteriota;Actinobacteria;Bifidobacteriales;Bifidobacteriaceae;Bifidobacterium;?"),]$Species <- "Bifidobacterium sp"
+cap1[which(rownames(cap1) == "Bacteria;Firmicutes;Clostridia;Lachnospirales;Lachnospiraceae;Blautia;?"),]$Species <- "Blautia sp"
+cap1[which(rownames(cap1) == "Bacteria;Firmicutes;Clostridia;Lachnospirales;Lachnospiraceae;Roseburia;?"),]$Species <- "Roseburia sp (a)"
+cap1[which(rownames(cap1) == "Bacteria;Firmicutes;Clostridia;Lachnospirales;Lachnospiraceae;Anaerostipes;?"),]$Species <- "Anaerostipes sp"
+cap1[which(rownames(cap1) == "Bacteria;Firmicutes;Clostridia;Lachnospirales;Lachnospiraceae;Moryella;human gut metagenome"),]$Species <- "Moryella sp"
+cap1[which(rownames(cap1) == "Bacteria;Firmicutes;Clostridia;Oscillospirales;Oscillospiraceae;Colidextribacter;Clostridium sp. GD3"),]$Species <- "Clostridium GD3 sp"
+cap1[which(rownames(cap1) == "Bacteria;Firmicutes;Clostridia;Oscillospirales;Ruminococcaceae;UBA1819;uncultured organism"),]$Species <- "Ruminococcaceae UBA1819 sp"
+cap1[which(rownames(cap1) == "Bacteria;Bacteroidota;Bacteroidia;Bacteroidales;Rikenellaceae;Alistipes;?"),]$Species <- "Alistipes sp"
+
+
+cap1_0<-subset(cap1, Species %in% c("Bifidobacterium sp"))
+cap1_2<-subset(cap1, Species %in% c("Alistipes sp"))
+cap1_3<-subset(cap1, Species %in% c("Christensenellaceae R-7 group sp"))
+cap1_4<-subset(cap1, Species %in% c("Lachnospiraceae sp"))
+cap1_5<-subset(cap1, Species %in% c("Anaerostipes sp"))
+cap1_6<-subset(cap1, Species %in% c("Blautia sp"))
+cap1_7<-subset(cap1, Species %in% c("Fusicatenibacter sp"))
+cap1_8<-subset(cap1, Species %in% c("Moryella sp"))
+cap1_9<-subset(cap1, Species %in% c("Roseburia sp (a)"))
+cap1_11<-subset(cap1, Species %in% c("Roseburia sp (b)"))
+cap1_12<-subset(cap1, Species %in% c("Clostridium methylpentosum group sp"))
+cap1_13<-subset(cap1, Species %in% c("Clostridium GD3 sp"))
+cap1_14<-subset(cap1, Species %in% c("Oscillospiraceae UCG-005 sp"))
+cap1_15<-subset(cap1, Species %in% c("Eubacterium siraeum group sp"))
+cap1_16<-subset(cap1, Species %in% c("Ruminococcaceae UBA1819 sp"))
+cap1_17<-subset(cap1, Species %in% c("Akkermansia muciniphila"))
+
+# Create a graph with specific position for each taxa name
+pl_arr_sp <- pl_sp + geom_point(size = 2) +
+  geom_segment(data = cap1, stat = "identity",
+               mapping = aes(x = 0, xend = CAP1*20, y = 0, yend = MDS1*20),
+               arrow = arrow(length = unit(2, "mm"), type = "open"), 
+               colour = "#696969", 
+               inherit.aes = F, 
+               linejoin = "mitre",
+               arrow.fill = "#696969") +
+    geom_label_repel(data = cap1_11,  
+            aes(x = CAP1*20, y = MDS1*20, label=cap1_11$Species),
+            nudge_x = -2,
+            nudge_y = 0.75,
+            segment.size  = 0.75,
+            segment.color = "#696969",
+            direction = "both",
+            hjust = 0.5,
+            size = 4,
+            inherit.aes = F, 
+            point.padding = 0.5,
+            seed = 987,
+            fill = "white") +
+    geom_label_repel(data = cap1_2,  
+            aes(x = CAP1*20, y = MDS1*20, label=cap1_2$Species),
+            nudge_x = 1,
+            nudge_y = -0.75,
+            segment.size  = 0.5,
+            segment.color = "#696969",
+            direction = "both",
+            hjust = 0.5,
+            size = 4,
+            inherit.aes = F, 
+            point.padding = 0.5,
+            seed = 987,
+            fill = "white") +
+    geom_label_repel(data = cap1_3,  
+            aes(x = CAP1*20, y = MDS1*20, label=cap1_3$Species),
+            nudge_x = -1,
+            nudge_y = 0,
+            segment.size  = 0.75,
+            segment.color = "#696969",
+            direction = "both",
+            hjust = 0.5,
+            size = 4,
+            inherit.aes = F, 
+            point.padding = 0.5,
+            seed = 987,
+            fill = "white") +
+      geom_label_repel(data = cap1_4,  
+            aes(x = CAP1*20, y = MDS1*20, label=cap1_4$Species),
+            nudge_x = -2,
+            nudge_y = 0.5,
+            segment.size  = 0.5,
+            segment.color = "#696969",
+            direction = "both",
+            hjust = 0.5,
+            size = 4,
+            inherit.aes = F, 
+            point.padding = 0.5,
+            seed = 987,
+            fill = "white") +
+      geom_label_repel(data = cap1_5,  
+            aes(x = CAP1*20, y = MDS1*20, label=cap1_5$Species),
+            nudge_x = -3,
+            nudge_y = 0,
+            segment.size  = 0.5,
+            segment.color = "#696969",
+            direction = "both",
+            hjust = 0.5,
+            size = 4,
+            inherit.aes = F, 
+            point.padding = 0.5,
+            seed = 987,
+            fill = "white") +
+      geom_label_repel(data = cap1_6,  
+            aes(x = CAP1*20, y = MDS1*20, label=cap1_6$Species),
+            nudge_x = -2,
+            nudge_y = 0.75,
+            segment.size  = 0.5,
+            segment.color = "#696969",
+            direction = "both",
+            hjust = 0.5,
+            size = 4,
+            inherit.aes = F, 
+            point.padding = 0.5,
+            seed = 987,
+            fill = "white") +
+      geom_label_repel(data = cap1_7,  
+            aes(x = CAP1*20, y = MDS1*20, label=cap1_7$Species),
+            nudge_x = -2,
+            nudge_y = 0.25,
+            segment.size  = 0.5,
+            segment.color = "#696969",
+            direction = "both",
+            hjust = 0.5,
+            size = 4,
+            inherit.aes = F, 
+            point.padding = 0.5,
+            seed = 987,
+            fill = "white") +
+      geom_label_repel(data = cap1_8,  
+            aes(x = CAP1*20, y = MDS1*20, label=cap1_8$Species),
+            nudge_x = -2,
+            nudge_y = 0.5,
+            segment.size  = 0.5,
+            segment.color = "#696969",
+            direction = "both",
+            hjust = 0.5,
+            size = 4,
+            inherit.aes = F, 
+            point.padding = 0.5,
+            seed = 987,
+            fill = "white") +
+    geom_label_repel(data = cap1_9,  
+            aes(x = CAP1*20, y = MDS1*20, label=cap1_9$Species),
+            nudge_x = -2,
+            nudge_y = -1,
+            segment.size  = 0.5,
+            segment.color = "#696969",
+            direction = "both",
+            hjust = 0.5,
+            size = 4,
+            inherit.aes = F, 
+            point.padding = 0.5,
+            seed = 987,
+            fill = "white") +
+      geom_label_repel(data = cap1_12,  
+            aes(x = CAP1*20, y = MDS1*20, label=cap1_12$Species),
+            nudge_x = -0.3,
+            nudge_y = 0.5,
+            segment.size  = 0.75,
+            segment.color = "#696969",
+            direction = "both",
+            hjust = 0.5,
+            size = 4,
+            inherit.aes = F, 
+            point.padding = 0.5,
+            seed = 987,
+            fill = "white") +
+   geom_label_repel(data = cap1_13,  
+            aes(x = CAP1*20, y = MDS1*20, label=cap1_13$Species),
+            nudge_x = -3,
+            nudge_y = -0.1,
+            segment.size  = 0.75,
+            segment.color = "#696969",
+            direction = "both",
+            hjust = 0.5,
+            size = 4,
+            inherit.aes = F, 
+            point.padding = 0.5,
+            seed = 987,
+            fill = "white") +
+   geom_label_repel(data = cap1_14,  
+            aes(x = CAP1*20, y = MDS1*20, label=cap1_14$Species),
+            nudge_x = 0.2,
+            nudge_y = 0.1,
+            segment.size  = 0.75,
+            segment.color = "#696969",
+            direction = "both",
+            hjust = 0.5,
+            size = 4,
+            inherit.aes = F, 
+            point.padding = 0.5,
+            seed = 987,
+            fill = "white") +
+   geom_label_repel(data = cap1_15,  
+            aes(x = CAP1*20, y = MDS1*20, label=cap1_15$Species),
+            nudge_x = -2,
+            nudge_y = 0.5,
+            segment.size  = 0.75,
+            segment.color = "#696969",
+            direction = "both",
+            hjust = 0.5,
+            size = 4,
+            inherit.aes = F, 
+            point.padding = 0.5,
+            seed = 987,
+            fill = "white") +
+   geom_label_repel(data = cap1_16,  
+            aes(x = CAP1*20, y = MDS1*20, label=cap1_16$Species),
+            nudge_x = 0,
+            nudge_y = 0,
+            segment.size  = 0.75,
+            segment.color = "#696969",
+            direction = "both",
+            hjust = 0.5,
+            size = 4,
+            inherit.aes = F, 
+            point.padding = 0.5,
+            seed = 987,
+            fill = "white") +
+   geom_label_repel(data = cap1_17,  
+            aes(x = CAP1*20, y = MDS1*20, label=cap1_17$Species),
+            nudge_x = 0.01,
+            nudge_y = 0,
+            segment.size  = 0.75,
+            segment.color = "#696969",
+            direction = "both",
+            hjust = 0.5,
+            size = 4,
+            inherit.aes = F, 
+            point.padding = 0.5,
+            seed = 987,
+            fill = "white") + 
+  geom_label_repel(data = cap1_0,  
+            aes(x = CAP1*20, y = MDS1*20, label=cap1_0$Species),
+            nudge_x = 0.5,
+            nudge_y = -0.05,
+            segment.size  = 0.5,
+            segment.color = "#696969",
+            direction = "both",
+            hjust = 0.5,
+            size = 4,
+            inherit.aes = F, 
+            point.padding = 0.5,
+            seed = 987,
+            fill = "white") +
+   labs(title = "dbRDA-JSD on TSS-normalized data (Species)",
+       subtitle = "Blocked by study and constrained by disease status",
+       shape = "Study",
+       color = "Status") +
+  theme_bw() +
+  theme(legend.key.size = unit(6, "mm"),
+        legend.text = element_text(size = 12),
+        legend.title = element_text(size = 12, face = "bold"),
+        legend.background = element_blank(),
+        title = element_text(size = 14, face = "bold"),
+        axis.title.x = element_text(size = 12, face = "plain"),
+        axis.title.y = element_text(size =12, face = "plain"),
+        axis.text  = element_text(size =12),
+        panel.grid = element_blank(),
+        plot.subtitle = element_text(size = 14, face = "plain")) +
+  guides(colour = guide_legend(override.aes = list(size=4.5)),
+         shape = guide_legend(override.aes = list(size=3)))
+
+
+# Anova-like permuation test on JSD dbRDA
+anova_dbrda_bloc_constr<-anova.cca(l_dbRDA_sp[[3]], by = "margin")
+
+# Add ANOVA info on Figure
+dbrda_sp <- pl_arr_sp + labs(caption = "ANOVA-like permutation test: F = 8.0, df = 1, p = 0.001***") + theme(plot.caption = element_text(size = 12, face = "plain"))
+
+# Save
+ggsave(dbrda_sp, 
+       filename = "Fig3_EnvFit_spec.eps",
+       width = 183, 
+       height = 183, 
+       units = "mm", 
+       device = "eps", 
+       dpi = 600)
+```
+
+# DA tests using WMW tests
+
+Plese note, in the coin package is specified that the kruskal_test for 2 groups is equivalend to a WMW test.
+
+```{r, message= FALSE}
+# Create a df that can be used for testing DA
+taxa_map<-cbind.data.frame(t(otu_table(l_prop[["Combined"]])), 
+                           status = meta(l_prop[["Combined"]])$status, 
+                           study = meta(l_prop[["Combined"]])$study)
+p<-vector(length = (ncol(taxa_map)-2))
+taxa_map$status<-as.factor(taxa_map$status)
+taxa_map$study<-as.factor(taxa_map$study)
+
+# DA test by blocking the combined data for study
+for(i in 1:(ncol(taxa_map)-2)){
+  it<-independence_test(as.numeric(taxa_map[,i]) ~ status|study, ytrafo = rank, data=taxa_map, teststat="scalar")
+  p[i]<-pvalue(it)
+  names(p)[i]<-names(taxa_map)[i]
+}
+
+p<-p.adjust(p, method = "BH")
+saveRDS(p, "P_values_independence_test.rds")
+
+# Create map_combined, that will be called later for decrease complexity
+map_combined<-meta(l_prop[["Combined"]])
+psign<-p[p <= 0.05] 
+sig_df<-taxa_map[,c(names(psign), "study", "status")]
+
+# Perform the WMW test for all the datasets indipendently
+l_map_taxa<-l_prop
+for(i in 1: length(l_prop)){
+  l_map_taxa[[i]]<-cbind.data.frame(t(otu_table(l_prop[[i]])), meta(l_prop[[i]]))
+  l_map_taxa[[i]]$status<-as.factor(l_map_taxa[[i]]$status)
+}
+l_wilcox_pval<-l_map_taxa
+for(i in 1: (length(l_map_taxa)-1)){
+  pval<-vector(length = ncol(l_map_taxa[[i]])-2)
+  for(tax in 1: (ncol(l_map_taxa[[i]])-2)){
+    w<-coin::kruskal_test(as.numeric(l_map_taxa[[i]][,tax]) ~ l_map_taxa[[i]]$status, paired = F, alternative = "two.sided",
+                          distribution = "exact")
+    pval[tax]<-pvalue(w)
+    names(pval)[tax]<-names(l_map_taxa[[i]])[tax]
+  }
+  pval<-p.adjust(pval, method = "BH")
+  l_wilcox_pval[[i]]<-pval
+}
+
+l_wilcox<-lapply(l_wilcox_pval, function(x) x[x <= 0.05])
+
+# Add the combined dataset to the list and save the results
+l_wilcox[["Combined"]]<-names(psign)
+saveRDS(l_wilcox, "NP_list_species_DA.rds")
+```
+
+
+# Similarity between studies
+```{r}
+# Extract the coordinates
+summary(l_dbRDA_sp$Unconstrained) ->a
+d<-as.data.frame(a$cont$importance[3,])
+d$dim<-rownames(d)
+names(d)<-c("cum_inert", "dim")
+d$dim<-as.factor(d$dim)
+ggplot(d, aes(reorder(dim, cum_inert), cum_inert, group = 1)) +
+  geom_line() +
+  geom_point() +
+  theme(axis.text.x = element_text(angle = 90))
+
+nrow(subset(d, cum_inert <= 0.90))
+
+scor_3<-as.data.frame(scores(l_dbRDA_sp$Unconstrained, choices = c(1:79), display = "sites"))
+
+# Chech that the order of samples is the same
+all(rownames(scor_3) == rownames(as.data.frame(sample_data(l_prop$Combined))))
+# Calculate Euclidean distances
+eu_sc3<-dist(scor_3)
+
+# I need to get now the average distance between studies
+df_sc3<-cbind.data.frame(scor_3, as.data.frame(sample_data(l_prop$Combined)))
+library(usedist)
+
+l_samples<-l_prop[-11]
+l_samples<-lapply(l_prop, sample_names)[-11]
+df_sc3$study<-as.character(df_sc3$study)
+
+l_samples<-l_samples[order(names(l_samples))]
+df_sc3<-df_sc3[order(df_sc3$study),]
+all(names(l_samples)==unique(df_sc3$study))
+
+combination<-combn(unique(df_sc3$study), m = 2)
+dim<-names(scor_3)
+
+# Createa a df with the distance between studies
+df_dist<-data.frame(study1 = rep(NA, ncol(combination)), study2 = rep(NA, ncol(combination)), dist = rep(0, ncol(combination)))
+for(i in 1:ncol(combination)){
+  study1 = combination[1,i]
+  study2 = combination[2,i]
+  df<-subset(df_sc3, study == study1 | study == study2, select = dim)
+  dist <- dist_between_centroids(eu_sc3, l_samples[[study1]], l_samples[[study2]], squared = T)
+  df_dist$study1[i]<-study1
+  df_dist$study2[i]<-study2
+  df_dist$dist[i]<-dist
+}
+
+# Manually create a distance matrix
+m<-acast(df_dist, study2 ~ study1)
+m1<-rbind(rep(0, 10), m)
+rownames(m1) <-c("Aho", rownames(m))
+m1[is.na(m1)]<-0
+d<-as.dist(m1)
+
+# Perform NMDS on the Euclidean distances
+mds<-metaMDS(d, k=2, autotransform = F, try = 50, trymax = 200)
+mds$stress
+
+p<-as.data.frame(mds$points)
+names(p)<-c("MDS1", "MDS2")
+
+# Make graph and save
+g<-ggplot(p, aes(MDS1, MDS2, shape = rownames(p))) +
+  geom_point(size =6.5, fill = "black") +
+  theme_bw() +
+    scale_shape_manual(values=c(2,5,6,11,17,0,19,7,8,4)) +
+  labs(title = "Study similarity based on dbRDA scores",
+       caption = "Stress 8.6%", shape = "Study") +
+  theme(title = element_text(size = 16, face = "bold"),
+        axis.text.x = element_blank(),
+        axis.title = element_text(size = 14, face = "plain"),
+        axis.text.y = element_blank(), 
+        plot.caption = element_text(size = 16, face = "bold"),
+        legend.title = element_text(size = 14),
+        legend.text = element_text(size = 14),
+        legend.key.size = unit(8, "mm"))
+
+ggsave(filename = "Study_similarities.svg", 
+       device = "svg", 
+       width = 5, 
+       height = 4,
+       dpi = 300)
+```
+
+## Save the workspace
+```{r, message=FALSE}
+save.image("Species_proportions_workspace.RData")
+```

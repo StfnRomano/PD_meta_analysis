@@ -1,0 +1,256 @@
+---
+title: "Tables"
+author: "Stefano Romano"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+# Before you begin:
+
+These scripts were tailored for the analyses we conducted. They are not meant to be used in other contexts and are reported here as a detailed extension of the method section of our article. Please, use them at your own risk.
+
+If you use any of the material or approaches in these scripts, please, cite:
+Romano et al, 2020, *Meta-analysis of the Parkinson’s disease gut microbiome suggests alterations linked to intestinal inflammation*
+
+Thank you!
+
+# Overview of the analyses
+This script was used to create the supplementary data (tables) for the manuscript.
+Please note, the tables were then manually formatted.
+
+Please, provide the full path to the files and R objects that need to be loaded.
+
+# Species
+```{R}
+library(dplyr)
+library(reshape2)
+
+# Load and format the data
+load("Species_proportions_workspace.RData")
+p<-readRDS("P_values_independence_test.rds")
+
+psign<-p[p<=0.05]
+l_wilcox$Combined<-psign
+
+l_df<-lapply(l_wilcox, as.data.frame)
+
+load("04_Species_DESEQ_GMPR_workspace.RData")
+
+all(names(l_df) == names(l_deseq_sign))
+
+l_df_w_d<-l_df
+for(i in 1:length(l_df)){
+  l_df_w_d[[i]]<-merge(l_df[[i]], l_deseq_sign[[i]], by = 0, all = T)
+  rownames(l_df_w_d[[i]])<-l_df_w_d[[i]]$Row.names
+}
+
+load("Combine_DA_species_a.RData")
+
+ancom_sign_rfss<-lapply(rf_ss_ancom, function(x) subset(x, detected_0.6 == TRUE))
+l_new_ancom_sign_taxa<-ancom_sign_rfss
+
+for(i in 1:length(ancom_sign_rfss)){
+  l_new_ancom_sign_taxa[[i]]<-merge(ancom_sign_rfss[[i]], rf_ss_taxa[[i]], by.x= 1, by.y=2)
+  rownames(l_new_ancom_sign_taxa[[i]])<-l_new_ancom_sign_taxa[[i]]$taxa
+}
+
+l_df_w_d_a<-l_df
+for(i in 1:length(l_df)){
+  l_df_w_d_a[[i]]<-merge(l_df_w_d[[i]], l_new_ancom_sign_taxa[[i]], by = 0, all = T)
+}
+
+# Create df and save it
+df<-do.call(rbind, l_df_w_d_a)
+write.table(df, file = "DA_species.txt", 
+            sep = "\t", 
+            quote = T, 
+            row.names = T, 
+            na = "NA", 
+            col.names = T)
+
+random_s<-readRDS("Random_sign_all_species.rds")
+names(random_s)<-c("Estimate", "Standard error", "CI-lower", "CI-upper", "adj. p-value")
+
+write.table(random_s, file = "DA_species_random.txt", 
+            sep = "\t", 
+            quote = T, 
+            row.names = T, 
+            na = "NA", 
+            col.names = T)
+
+```
+
+
+# Genus
+```{R}
+# Load and format the data
+load("Genus_proportions_workspace.RData")
+p<-readRDS("P_values_independence_test.rds")
+
+psign<-p[p<=0.05]
+l_wilcox$Combined<-psign
+
+l_df<-lapply(l_wilcox, as.data.frame)
+
+load("04_Genus_DESEQ_GMPR_workspace.RData")
+
+all(names(l_df) == names(l_deseq_sign))
+
+l_df_w_d<-l_df
+for(i in 1:length(l_df)){
+  l_df_w_d[[i]]<-merge(l_df[[i]], l_deseq_sign[[i]], by = 0, all = T)
+  rownames(l_df_w_d[[i]])<-l_df_w_d[[i]]$Row.names
+
+}
+
+load("Combine_DA_genus_a.RData")
+
+ancom_sign_rfss<-lapply(rf_ss_ancom, function(x) subset(x, detected_0.6 == TRUE))
+l_new_ancom_sign_taxa<-ancom_sign_rfss
+
+for(i in 1:length(ancom_sign_rfss)){
+  l_new_ancom_sign_taxa[[i]]<-merge(ancom_sign_rfss[[i]], rf_ss_taxa[[i]], by.x= 1, by.y=2)
+  rownames(l_new_ancom_sign_taxa[[i]])<-l_new_ancom_sign_taxa[[i]]$taxa
+}
+
+l_df_w_d_a<-l_df
+for(i in 1:length(l_df)){
+  l_df_w_d_a[[i]]<-merge(l_df_w_d[[i]], l_new_ancom_sign_taxa[[i]], by = 0, all = T)
+}
+
+# Combine data and save it
+df<-do.call(rbind, l_df_w_d_a)
+write.table(df, file = "DA_genus.txt", 
+            sep = "\t", 
+            quote = F, 
+            row.names = T, 
+            na = "NA", 
+            col.names = T)
+
+random_g<-readRDS("Random_sign_all_genus.rds")
+names(random_g)<-c("Estimate", "Standard error", "CI-lower", "CI-upper", "adj. p-value")
+
+write.table(random_g, file = "DA_genus_random.txt", 
+            sep = "\t", 
+            quote = T, 
+            row.names = T, 
+            na = "NA", 
+            col.names = T)
+
+```
+
+# Family
+```{R}
+# Load and format the data
+load("Family_proportions_workspace.RData")
+p<-readRDS("P_values_independence_test.rds")
+
+psign<-p[p<=0.05]
+l_wilcox$Combined<-psign
+
+l_df<-lapply(l_wilcox, as.data.frame)
+
+load("04_Family_DESEQ_GMPR_workspace.RData")
+
+all(names(l_df) == names(l_deseq_sign))
+
+l_df_w_d<-l_df
+for(i in 1:length(l_df)){
+  l_df_w_d[[i]]<-merge(l_df[[i]], l_deseq_sign[[i]], by = 0, all = T)
+  rownames(l_df_w_d[[i]])<-l_df_w_d[[i]]$Row.names
+}
+
+load("Combine_DA_family_a.RData")
+
+ancom_sign_rfss<-lapply(rf_ss_ancom, function(x) subset(x, detected_0.6 == TRUE))
+l_new_ancom_sign_taxa<-ancom_sign_rfss
+
+for(i in 1:length(ancom_sign_rfss)){
+  l_new_ancom_sign_taxa[[i]]<-merge(ancom_sign_rfss[[i]], rf_ss_taxa[[i]], by.x= 1, by.y=2)
+  rownames(l_new_ancom_sign_taxa[[i]])<-l_new_ancom_sign_taxa[[i]]$taxa
+}
+all(names(l_df_w_d) == names(l_new_ancom_sign_taxa))
+
+l_df_w_d_a<-l_df
+for(i in 1:length(l_df)){
+  l_df_w_d_a[[i]]<-merge(l_df_w_d[[i]], l_new_ancom_sign_taxa[[i]], by = 0, all = T)
+}
+
+# Combine data and save it
+df<-do.call(rbind, l_df_w_d_a)
+write.table(df, file = "DA_family.txt", 
+            sep = "\t", 
+            quote = F, 
+            row.names = T, 
+            na = "NA", 
+            col.names = T)
+
+random_f<-readRDS("Random_sign_all_family.rds")
+names(random_f)<-c("Estimate", "Standard error", "CI-lower", "CI-upper", "adj. p-value")
+
+write.table(random_f, file = "DA_family_random.txt", 
+            sep = "\t", 
+            quote = T, 
+            row.names = T, 
+            na = "NA", 
+            col.names = T)
+
+
+```
+
+# Picrust
+```{R}
+# Load and format the data
+load("DA_metacyc_workspace.RData")
+l_deseq_sign
+rf_ss_ancom<-l_anc
+rf_ss_taxa<-l_spec_taxa
+psign<-p[p<=0.05]
+l_wilcox$Combined<-psign
+
+l_df<-lapply(l_wilcox, as.data.frame)
+all(names(l_df) == names(l_deseq_sign))
+
+l_df_w_d<-l_df
+for(i in 1:length(l_df)){
+  l_df_w_d[[i]]<-merge(l_df[[i]], l_deseq_sign[[i]], by = 0, all = T)
+  rownames(l_df_w_d[[i]])<-l_df_w_d[[i]]$Row.names
+}
+
+
+ancom_sign_rfss<-lapply(rf_ss_ancom, function(x) subset(x, detected_0.6 == TRUE))
+l_new_ancom_sign_taxa<-ancom_sign_rfss
+
+for(i in 1:length(ancom_sign_rfss)){
+  l_new_ancom_sign_taxa[[i]]<-merge(ancom_sign_rfss[[i]], rf_ss_taxa[[i]], by.x= 1, by.y=2)
+  rownames(l_new_ancom_sign_taxa[[i]])<-l_new_ancom_sign_taxa[[i]]$taxa
+}
+all(names(l_df_w_d) == names(l_new_ancom_sign_taxa))
+
+l_df_w_d_a<-l_df
+for(i in 1:length(l_df)){
+  l_df_w_d_a[[i]]<-merge(l_df_w_d[[i]], l_new_ancom_sign_taxa[[i]], by = 0, all = T)
+}
+# Combine data and save it
+df<-do.call(rbind, l_df_w_d_a)
+write.table(df, file = "DA_Picrust.txt", 
+            sep = "\t", 
+            quote = T, 
+            row.names = T, 
+            na = "NA", 
+            col.names = T)
+
+
+random_m<-readRDS("Random_sign_all_metacyc.rds")
+names(random_m)<-c("Estimate", "Standard error", "CI-lower", "CI-upper", "adj. p-value")
+
+write.table(random_m, file = "DA_metacyc_random.txt", 
+            sep = "\t", 
+            quote = T, 
+            row.names = T, 
+            na = "NA", 
+            col.names = T)
+
+```
+
+

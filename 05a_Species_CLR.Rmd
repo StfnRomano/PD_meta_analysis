@@ -1,0 +1,168 @@
+---
+title: "CLR_Beta"
+author: "Stefano Romano"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+# Before you begin:
+
+These scripts were tailored for the analyses we conducted. They are not meant to be used in other contexts and are reported here as a detailed extension of the method section of our article. Please, use them at your own risk.
+
+If you use any of the material or approaches in these scripts, please, cite:
+Romano et al, 2020, *Meta-analysis of the Parkinson’s disease gut microbiome suggests alterations linked to intestinal inflammation*
+
+Thank you!
+
+# Load the needed packages
+```{r, message=F}
+list.of.packages <- c("ggplot2", "dplyr", "reshape2", "propr", "devtools", "ggpubr", "vegan")
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages)
+
+if (!requireNamespace("BiocManager", quietly = TRUE)){
+  install.packages("BiocManager")}
+
+
+list.of.bioc <- c("phyloseq", "zCompositions", "grDevices", "microbiome")
+new.packages <- list.of.bioc[!(list.of.bioc %in% installed.packages()[,"Package"])]
+if(length(new.packages)) BiocManager::install(new.packages)
+
+
+library(phyloseq)
+library(microbiome)
+library(ggpubr)
+library(ggplot2)
+library(reshape2)
+library(dplyr)
+library(grDevices)
+library(vegan)
+library(devtools)
+library(zCompositions)
+library(propr)
+devtools::install_github('ggloor/CoDaSeq/CoDaSeq')
+library(CoDaSeq)
+```
+
+# Overview of the analyses
+We will verify the effect of disease status and study on microbial community structure and perform a differential abundance analysis using ANCOM2 (this is reported in script 5b).
+Please provide the full path to the files and R objects that need to be loaded.
+
+## Load the list pf phyloseq objects
+```{r setup, message=FALSE}
+l_phylo<-readRDS("Phyloseq_list_all_studies.rds")
+```
+
+## Remove Eukaryotes and Chloroplasts then do CLR transformation
+```{r, message=F}
+# Remove Eukaryotes
+l_phylo<-lapply(l_phylo, function(x) prune_taxa(taxa_names(x)[!(grepl("Eukaryota", taxa_names(x), ignore.case = TRUE))], x))
+# Check that there are not Euk left
+if(length(unlist(lapply(l_phylo, function(x) taxa_names(x)[grep("Eukary*", taxa_names(x))]))) == 0){
+  print("All Eukaryotes removed")
+}else{stop("There are still Eukaryotes sequences in the files")}
+
+# Check Chloroplasts
+for(i in 1:length(l_phylo)){
+  if(sum(grep("Chloroplast", taxa_names(l_phylo[[i]]))) > 0){
+    l_phylo[[i]]<-prune_taxa(taxa_names(l_phylo[[i]])[!(grepl("Chloropl*", taxa_names(l_phylo[[i]]), ignore.case = TRUE))], l_phylo[[i]])
+  } else {}
+}
+
+if(length(unlist(lapply(l_phylo, function(x) taxa_names(x)[grep("Chloropl*", taxa_names(x))]))) == 0){
+  print("All Chloroplast removed")
+}else{stop("There are still Chloroplast sequences in the files")}
+
+# Remove samples that have potentailly 0 counts
+l_phylo<-lapply(l_phylo, function(x) prune_samples(sample_sums(x) > 0, x))
+
+# CLR transformation
+l_otu<-lapply(l_phylo, function(x) as.data.frame(otu_table(x)))
+l_n0<-lapply(l_otu, function(x) cmultRepl(t(x), method="CZM", label=0))
+l_clr<-lapply(l_n0, function(x) codaSeq.clr(x))
+
+for(i in 1:length(l_phylo)){
+  otu_table(l_phylo[[i]])<-otu_table(as.data.frame(l_clr[[i]]), taxa_are_rows = F)
+}
+
+```
+
+## Beta diversity
+```{r, message=F}
+# As reccomended bly Gloor et al (2017), Euclidean distance on CLR transformed data are equivalent to Aitchison distances
+l_euc<-lapply(l_phylo, function(x) phyloseq::distance(x, method= "euclidean", na.rm = F))
+
+# Transform variables into factors
+for(i in 1:length(l_phylo)){
+  x<-meta(l_phylo[[i]])
+  x$status<-as.factor(x$statu)
+  x$study<-as.factor(x$study)
+  sample_data(l_phylo[[i]])<-sample_data(x)
+}
+
+set.seed(987)
+
+l_adonis_e<-l_euc
+names(l_adonis_e)<-names(l_euc)
+for(i in 1:length(l_euc)){
+  l_adonis_e[[i]]<-adonis2(l_euc[[i]] ~ status, data = meta(l_phylo[[i]]))
+}
+
+# Format ADONIS results and save
+adonis_df_e<-data.frame(matrix(nrow = length(l_adonis_e), ncol = 4))
+for(i in 1:length(l_euc)){
+  adonis_df_e[i,]<- c(names(l_adonis_e)[i], l_adonis_e[[i]]$R2[1], l_adonis_e[[i]]$`Pr(>F)`[1], "Euclidean_CLR")
+}
+names(adonis_df_e)<-c("Study", "R2", "pvalue", "Index")
+
+for(i in 1:nrow(adonis_df_e)){
+  if(adonis_df_e$pvalue[i] < 0.1 & adonis_df_e$pvalue[i] > 0.05 ){
+    adonis_df_e$Significant[i]<-"Significant [0.05<p<0.1]"
+  } else if (adonis_df_e$pvalue[i] < 0.05){
+    adonis_df_e$Significant[i]<-"Significant [p<0.05]"
+  } else {adonis_df_e$Significant[i]<-"Not_significant"
+  }
+}
+
+adonis_df_e$Significant<-as.factor(adonis_df_e$Significant)
+adonis_df_e$R2<-round(as.numeric(adonis_df_e$R2)*100, digits = 1)
+
+
+# Check the marginal effect of study and disease status
+adonis_com_e<-adonis2(l_euc$Combined ~ study + status, data = meta(l_phylo$Combined), by = "margin")
+
+# Save ADONIS for plotting
+saveRDS(adonis_df_e, "Adonis_species_CLR.rds")
+
+# Perform dbRDA
+l_dbRDA_spe<-vector(mode = "list", length = 3)
+l_dbRDA_spe[[1]]<-ordinate(l_phylo[["Combined"]], method = "CAP", distance = l_euc[["Combined"]], formula = l_phylo[["Combined"]] ~ 1 )
+l_dbRDA_spe[[2]]<-ordinate(l_phylo[["Combined"]], method = "CAP", distance = l_euc[["Combined"]], formula = l_phylo[["Combined"]] ~ 1  + Condition(study))
+l_dbRDA_spe[[3]]<-ordinate(l_phylo[["Combined"]], method = "CAP", distance = l_euc[["Combined"]], formula = l_phylo[["Combined"]] ~  status + Condition(study))
+
+names(l_dbRDA_spe)<-c("Unconstrained", "Blocked", "Blocked_constrained")
+l_dbRDA_spe_plots<-lapply(l_dbRDA_spe, function(x) plot_ordination(l_phylo[["Combined"]], x, 
+                "samples", color="status", shape = "study") +
+                theme_bw() +
+                scale_shape_manual(values=c(2,5,6,11,17,0,19,7,8,4)) +
+                scale_colour_manual(values=c("#999999", "#E69F00")) +
+                geom_point(size = 2.5) +
+                labs(color = "Status", shape = "Study") +
+                theme(legend.title = element_text(size = 12, face = "bold"),
+                      legend.text = element_text(size = 12)))
+              
+                
+g<-ggarrange(plotlist = l_dbRDA_spe_plots, common.legend = T, font.label = list(size = 10), label.x = 0.15, label.y = 0.975, ncol = 3,
+             labels = c("a: Unconstrained", "b: Blocked by study", "c: Blocked by study constrained by condition"),
+             hjust = c(0,0,0), legend = "bottom") 
+g_Species<-annotate_figure(g, top = text_grob("Species", size = 12, face = "bold"))
+
+# Save RDS
+saveRDS(g_Species, "dbRDA_species_CLR.rds")
+```
+
+## Save workspace
+```{r, message=FALSE}
+save.image("05a_Species_CLR_workspace.RData")
+
+```

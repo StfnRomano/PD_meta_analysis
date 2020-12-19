@@ -1,0 +1,443 @@
+---
+title: "Alpha_diversity_species"
+author: "Stefano Romano"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+# Before you begin:
+
+These scripts were tailored for the analyses we conducted. They are not meant to be used in other contexts and are reported here as a detailed extension of the method section of our article. Please, use them at your own risk.
+
+If you use any of the material or approaches in these scripts, please, cite:
+Romano et al, 2020, *Meta-analysis of the Parkinson’s disease gut microbiome suggests alterations linked to intestinal inflammation*
+
+Thank you!
+
+
+# Load the needed packages
+```{r, message=F}
+list.of.packages <- c("ggplot2", "reshape2", "dplyr", "devtools", "ggpubr", "data.table", "genodds", "meta", "grid")
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages)
+
+if (!requireNamespace("BiocManager", quietly = TRUE)){
+  install.packages("BiocManager")}
+
+
+list.of.bioc <- c("phyloseq", "microbiome")
+new.packages <- list.of.bioc[!(list.of.bioc %in% installed.packages()[,"Package"])]
+if(length(new.packages)) BiocManager::install(new.packages)
+
+
+library(phyloseq)
+library(microbiome)
+library(ggpubr)
+library(ggplot2)
+library(reshape2)
+library(dplyr)
+library(meta)
+library(data.table)
+library(genodds)
+library(grid)
+
+
+```
+
+# Alpha diversity analyses
+We will calculate various alpha diversity indices and test whether their differences between PD and controls are statistically significant. We will use for testing purposes Agresti's generalized odds ratios and a mixed-effect meta-analysis approach to pool the results.
+
+A full path to the R objects and files should be provided.
+
+## Load the list pf phyloseq objects
+```{r setup, message=FALSE}
+l_phylo<-readRDS("Phyloseq_list_all_studies.rds")
+```
+
+## Remove Eukaryotes and Choroplasts and rarefy.
+No sequences calssified as Mitochondria were found in the datasets
+
+```{r, message=F}
+# Remove Eukaryotes
+l_phylo<-lapply(l_phylo, function(x) prune_taxa(taxa_names(x)[!(grepl("Eukaryota", taxa_names(x), ignore.case = TRUE))], x))
+
+# Check that there are not Euk left
+if(length(unlist(lapply(l_phylo, function(x) taxa_names(x)[grep("Eukary*", taxa_names(x))]))) == 0){
+  print("All Eukaryotes removed")
+}else{stop("There are still Eukaryotes sequences in the files")}
+
+# Check Chloroplasts and Mitochondria
+for(i in 1:length(l_phylo)){
+  if(sum(grep("Chloroplast", taxa_names(l_phylo[[i]]))) > 0){
+    l_phylo[[i]]<-prune_taxa(taxa_names(l_phylo[[i]])[!(grepl("Chloropl*", taxa_names(l_phylo[[i]]), ignore.case = TRUE))], l_phylo[[i]])
+  } else {}
+}
+
+if(length(unlist(lapply(l_phylo, function(x) taxa_names(x)[grep("Chloropl*", taxa_names(x))]))) == 0){
+  print("All Chloroplast removed")
+}else{stop("There are still Chloroplast sequences in the files")}
+
+
+if(length(unlist(lapply(l_phylo, function(x) taxa_names(x)[grep("Mitoch*", taxa_names(x))]))) == 0){
+  print("All mitochondria removed")
+}else{stop("There are still mitochondria sequences in the files")}
+# In all dataets there were no mitochondria sequences
+
+# Remove eventual samples with 0 sequence
+l_phylo<-lapply(l_phylo, function(x) prune_samples(sample_sums(x) > 0, x))
+
+
+# Rarefy to 5000, no replacements, OTUs no longer observed in any sample are removed
+# Samples with fewer reads than samples size (5000) will be removed
+
+l_rar<-lapply(l_phylo, function(x) rarefy_even_depth(x, 
+                                                    sample.size = 5000, 
+                                                    replace = FALSE, 
+                                                    trimOTUs = TRUE, 
+                                                    rngseed = 56987))
+# Save rarefied data for the other analyses
+saveRDS(l_rar, "raref_list_all_studies.rds")
+```
+
+## Calculate Firmicutes Bacteroidota ratio (F/B) ratio.
+
+The log2 ratio is calcualte using the relative abudance of each taxa
+
+```{r, message=F}
+# Remove the combined datsets
+l_rar<-l_rar[-11] # Remove the combine dataset
+
+# Create a file with proportions
+l_prop<-lapply(l_rar, function(x) transform_sample_counts(x, function(x){x / sum(x)}))
+
+# Calcualte F/B ratio from Species table
+firm<-vector(mode = "list")
+bact<-vector(mode = "list")
+fbratio<-vector(mode  ="list", length = length(l_prop))
+for(i in 1:length(l_prop)){
+  firm[[i]]<-as.data.frame(otu_table(l_prop[[i]])[grep("Firmicutes", rownames(otu_table(l_prop[[i]]))),])
+  bact[[i]]<-as.data.frame(otu_table(l_prop[[i]])[grep("Bacteroidota", rownames(otu_table(l_prop[[i]]))),])
+  if(all(names(firm[[i]]) == names(bact[[i]])) == TRUE){
+    print("Firma and Bact. table have the same order of samples")
+  }
+  else{
+    (stop("Order of samples is different in Firm and Bact table"))
+  }
+  for(s in 1:ncol(firm[[i]])){
+    fbratio[[i]]$sample[s]<-names(firm[[i]])[s]
+    fbratio[[i]]$log2_fb_ratio[s]<-log(sum(firm[[i]][,s])/sum(bact[[i]][,s]), base = 2)
+  }
+  fbratio[[i]]<-data.frame(sample = fbratio[[i]]$sample, log2_fb_ratio = fbratio[[i]]$log2_fb_ratio)
+}
+```
+
+## Calculate Prevotella Bacteroides ratio (P/B) ratio.
+The log2 ratio is calculated using the relative abudance of each taxa
+
+```{r, message=F}
+# Calcualte F/B ratio from Species table
+prev<-vector(mode = "list")
+bact<-vector(mode = "list")
+pbratio<-vector(mode  ="list", length = length(l_prop))
+for(i in 1:length(l_prop)){
+  prev[[i]]<-as.data.frame(otu_table(l_prop[[i]])[grep("Prevotella", rownames(otu_table(l_prop[[i]]))),])
+  bact[[i]]<-as.data.frame(otu_table(l_prop[[i]])[grep("Bacteroides", rownames(otu_table(l_prop[[i]]))),])
+  if(all(names(prev[[i]]) == names(bact[[i]])) == TRUE){
+    print("Prev and Bact. table have the same order of sample")
+  }
+  else{
+    (stop("Order of samples is different in Prevo and Bact table"))
+  }
+  for(s in 1:ncol(prev[[i]])){
+    pbratio[[i]]$sample[s]<-names(prev[[i]])[s]
+    pbratio[[i]]$log2_pb_ratio[s]<-log(sum(prev[[i]][,s])/sum(bact[[i]][,s]), base = 2)
+  }
+  pbratio[[i]]<-data.frame(sample = pbratio[[i]]$sample, log2_pb_ratio = pbratio[[i]]$log2_pb_ratio)
+}
+```
+
+## Calculate the rest of the alpha indeces
+
+```{r, message=FALSE}
+ind<-c("observed",  "chao1", "diversity_fisher", 
+       "evenness_simpson", "evenness_bulla", "dominance_core_abundance",
+       "dominance_simpson", "rarity_low_abundance", "rarity_rare_abundance")
+
+l_rich<-lapply(l_rar, function(x) microbiome::alpha(x, ind))
+names(l_rich)<-names(l_rar)
+
+# Add the ACE from phyloseq
+for(i in 1:length(l_rich)){
+  ps<-estimate_richness(l_rar[[i]], measures = c("ACE"))
+  l_rich[[i]]$ACE<-ps$ACE
+}
+
+
+l_maps<-lapply(l_rar, function(x) meta(x))
+names(l_maps)<-names(l_rar)  
+# Combine the metadata and the alpha diversity indices
+rich_map<-l_maps
+for(i in 1: length(l_maps)){
+    l_rich[[i]]<-l_rich[[i]][order(rownames(l_rich[[i]])),]
+    l_maps[[i]]<-l_maps[[i]][order(rownames(l_maps[[i]])),]
+    fbratio[[i]][order(fbratio[[i]]$sample),]
+    if(all(rownames(l_rich[[i]]) == fbratio[[i]]$sample)){
+        print("Order of samples in the two df is the same, fb_ratio and other indices ca be merged")
+        l_rich[[i]]$log2_fb_ratio<-fbratio[[i]]$log2_fb_ratio
+      }else{stop("There is a problem, samples in files are not in the same order")
+    }
+     if(all(rownames(l_rich[[i]]) == pbratio[[i]]$sample)){
+        print("Order of samples in the two df is the same, pb_ratio and other indices ca be merged")
+        l_rich[[i]]$log2_pb_ratio<-pbratio[[i]]$log2_pb_ratio
+      }else{stop("There is a problem, samples in files are not in the same order")
+    }
+    if(all(rownames(l_rich[[i]]) == rownames(l_maps[[i]]))){
+      rich_map[[i]]<-cbind(l_rich[[i]], l_maps[[i]])
+      }else{stop("Richness and meta data have samples in diff order. Adjust this before proceeding")}
+    
+}
+```
+
+# Agresti's generalized odds ratios 
+```{R}
+# Create a df and format it for the following analyses
+tab1<-do.call(rbind.data.frame, rich_map) 
+tab1$samples<-rownames(tab1)
+tab1df <- data.table(tab1)
+tab1$status <- as.factor(tab1$status)
+tab1$study <- as.factor(tab1$study)
+
+# Meta analysis using Agresti's log-generalized odds ratio.
+meta_alphas2 <- lapply(1:12, function(a){
+  print(a)
+  results <- by(data=data.frame(tab1), INDICES = tab1$study, FUN = function(d) {
+    lo <- genodds(d[,a], d$status)
+    c(lo$pooled_lnodds, lo$pooled_SElnodds)
+    }
+    )
+  results <- data.frame(do.call(rbind,results))
+  names(results) <- c("estimate", "se")
+  results$study <- levels(tab1$study)
+  # For each measure, return a list that is the meta-analysis results [[1]] and the
+  # table of individual results in [[2]]
+  list(metagen(TE=estimate, seTE=se,data=results,method.tau = "ML",studlab=study, comb.fixed = F, comb.random = T), 
+       results)
+})
+
+names(meta_alphas2)<-names(tab1)[1:12]
+
+## Now gather all the results together
+random.meta <- do.call(rbind,lapply(meta_alphas2, function(m) as.data.frame(m[[1]][c("TE.random","seTE.random", "lower.random", "upper.random", "pval.random")])))
+random.meta$statistic <- names(tab1)[1:12]
+random.meta$statistic <- factor(random.meta$statistic, levels=random.meta$statistic)
+
+
+# Do two series of graphs, one for diversity indices and one for f/b and p/b ratios
+# Format the dfs
+ind<-c("ACE", ind)
+df<-subset(random.meta, statistic %in% ind)
+
+df$statistic<-factor(df$statistic, levels = c("observed", "chao1","ACE", 
+                                              "diversity_fisher", "evenness_simpson",
+                                              "evenness_bulla", "dominance_core_abundance",
+                                              "dominance_simpson", "rarity_low_abundance",
+                                              "rarity_rare_abundance"),
+                     labels = c("Observed", "Chao1","ACE", 
+                                "Fisher alpha", "Evenness Simpson",
+                                              "Evenness Bulla", "Dominance core abundance",
+                                              "Dominance Simpson", "Rarity low abundance",
+                                              "Rarity rare abundance"))
+p<-ggplot(df, aes(y=TE.random, 
+                        ymax=upper.random, 
+                        ymin=lower.random,
+                        x=statistic)) + 
+  geom_errorbar(width=0.2) + 
+  geom_point(aes(fill = seTE.random), shape = 21, size =4.5) + 
+  scale_fill_viridis_c(breaks = c(0.08, 0.09,0.1, 0.11)) +
+  theme_bw() + 
+  coord_flip() + 
+  geom_hline(yintercept=0, linetype="dashed", color="gray50") + 
+  labs(y="Log-Generalised Odds Ratio (95% CI)", 
+      x="Diversity Indices",
+      fill = "Standard\nerror") +
+  theme(axis.title.x = element_text(size =16, face = "plain", vjust = 1),
+        axis.title.y = element_text(size =16, face = "plain"),
+        axis.text.x = element_text(size = 16),
+        axis.text.y = element_text(size =16), 
+        legend.title = element_text(size =14, face = "bold"),
+        legend.text = element_text(size = 14),
+        plot.margin = margin(35,1,1,1)) 
+
+library(grid)
+library(gridExtra)
+
+# Create a text and title to add
+grob <- grobTree(textGrob("Control", x=0.01,  y=0.02, hjust=0,
+  gp=gpar(col="black", fontsize=14, fontface="italic")))
+grob2 <- grobTree(textGrob("PD", x=0.92,  y=0.02, hjust=0,
+  gp=gpar(col="black", fontsize=14, fontface="italic")))
+
+(p2<-p + annotation_custom(grob) + 
+  annotation_custom(grob2))
+
+p1<-ggdraw(p2) + draw_text("Changes in diversity indices between PD and controls", 
+                      x = 0.27, y = 0.98, hjust = 0, vjust = 1,
+                      size = 18) 
+
+# Save figure
+ggsave2("Alpha.svg", 
+        p1, 
+        device = "svg", 
+        width = 8.3, 
+        height = 7, 
+        dpi = 300)
+
+# Make a forest plot for each index 
+# Format the results in a df
+metan<-lapply(meta_alphas2, function(x) x[[1]])
+meta2df<-function(meta){
+  df<-data.frame(study = vector(), estimate = vector(), se_est = vector(),
+                 lower = vector(), upper = vector(), w.random = vector(),
+                 index = vector(), het = vector())
+    
+  for(i in 1:length(meta)){
+    lab<-meta[[i]]$studlab
+    index<-rep(names(meta)[i], length(meta[[i]]$studlab))
+    te<-meta[[i]]$TE
+    se<-meta[[i]]$seTE
+    low<-meta[[i]]$lower
+    up<-meta[[i]]$upper
+    weight<-meta[[i]]$w.random
+    d<-data.frame(study = lab, estimate = te, se_est = se,
+                 lower = low, upper = up, w.random = weight,
+                 index = index, het = rep(NA, length(index)))
+    d$study<-as.character(d$study)
+    d[(nrow(d)+1),1]<-"Random effect model"
+    d[nrow(d),2:6]<-c(meta[[i]]$TE.random,meta[[i]]$seTE.random,meta[[i]]$lower.random,meta[[i]]$upper.random,100)
+    d[nrow(d),7]<-names(meta)[i]
+    I2<-round(meta[[i]]$I2, 3)*100
+    tu<-round(metan[[i]]$tau2,2)
+    pval<-round(metan[[i]]$pval.Q, 2)
+    d[nrow(d),8]<-paste0("Het: I","\u00b2", "=", I2, ", tau","\u00b2","=", tu, ", p-val=", pval)
+    d$study<-factor(d$study, levels = unique(d$study))
+    d$study<-relevel(d$study, "Random effect model")
+    df<-rbind.data.frame(df,d)
+  }
+  return(df)
+}
+
+# Plot forest plot in ggplot
+df<-meta2df(metan)
+df$w.random[df$w.random ==100] <-NA
+a<-ggplot(df[df$index%in% ind,], aes(y=estimate, 
+                        ymax=upper, 
+                        ymin=lower,
+                        x=study)) + 
+  geom_errorbar(width=0.2) + 
+  geom_point(aes(fill = se_est, size = w.random), shape = 21) + 
+  scale_fill_viridis_c() +
+  theme_bw() + 
+  coord_flip() + 
+  facet_wrap(~index, ncol = 5) +
+  geom_hline(yintercept=0, linetype="dashed", color="gray50") + 
+  labs(fill = "SE",
+       size = "Weights in random effect model [%]",
+       x = "Study",
+       y = "Log-Generalised Odds Ratio (95% CI)",
+       title = "Changes in diversity indices between PD and Controls") +
+  theme(axis.title.x = element_text(size =16, face = "plain", vjust = 1),
+        axis.title.y = element_text(size =16, face = "plain"),
+        axis.text.x = element_text(size = 16),
+        axis.text.y = element_text(size =16), 
+        legend.title = element_text(size =14, face = "bold"),
+        legend.text = element_text(size = 14),
+        strip.text = element_text(size = 14),
+        title = element_text(size = 18, face = "bold"),
+        legend.position = "bottom")
+
+
+# Add text
+tag_facet2 <- function(p, open = "(", close = ")", tag_pool = letters, x = -Inf, y = Inf, 
+    hjust = -0.5, vjust = 1.5, fontface = 2, family = "", ...) {
+
+    gb <- ggplot_build(p)
+    lay <- gb$layout$layout
+    tags <- cbind(lay, label = paste0(open, tag_pool[lay$PANEL], close), x = x, y = y)
+    p + geom_text(data = tags, aes_string(x = "x", y = "y", label = "label"), ..., hjust = hjust, 
+        vjust = vjust, fontface = fontface, family = family, inherit.aes = FALSE)
+}
+
+df2<-subset(df,index %in% ind )
+my_tag <- df2$het[!(is.na(df2$het))]
+at<-tag_facet2(a, 
+          x = -Inf, y = -Inf, 
+          vjust = -0.2, hjust = -0.01,
+          open = "", close = "",
+          fontface = 1,
+          size = 4,
+          family = "serif",
+          tag_pool = my_tag)
+
+ggsave(at, 
+       filename = "Alpha_forest.tiff", 
+       device = "tiff", 
+       width = 16, 
+       height = 11, 
+       dpi = 300)
+
+
+
+# Do graph for f/b and p/b
+
+(a<-ggplot(df[df$index%in% c("log2_fb_ratio", "log2_pb_ratio"),], aes(y=estimate, 
+                        ymax=upper, 
+                        ymin=lower,
+                        x=study)) + 
+  geom_errorbar(width=0.2) + 
+  geom_point(aes(fill = se_est, size = w.random), shape = 21) + 
+  scale_fill_viridis_c() +
+  theme_bw() + 
+  coord_flip() + 
+  facet_wrap(~index, ncol = 5) +
+  geom_hline(yintercept=0, linetype="dashed", color="gray50") + 
+  labs(fill = "SE",
+       size = "Weights in random effect model [%]",
+       x = "Study",
+       y = "Log-Generalised Odds Ratio (95% CI)",
+       title = "Changes in diversity indices between PD and Controls") +
+  theme(title = element_text(size = 15, face = "bold"),
+        axis.title = element_text(size =14, face = "plain"),
+        axis.text.x = element_text(size = 14),
+        axis.text.y = element_text(size =14), 
+        legend.title = element_text(size =12, face = "bold"),
+        legend.text = element_text(size = 12),
+        legend.position = "bottom",
+        legend.direction = "horizontal",
+        strip.text = element_text(size = 14))) 
+
+# Add text
+df2<-subset(df,index %in% c("log2_fb_ratio", "log2_pb_ratio") )
+my_tag <-  unique(df2$het)[-1]
+at<-tag_facet2(a, 
+          x = -Inf, y = -Inf, 
+          vjust = -0.2, hjust = -0.01,
+          open = "", close = "",
+          fontface = 1,
+          size = 4,
+          family = "serif",
+          tag_pool = my_tag)
+
+# Save  
+ggsave(at, 
+       filename = "Pb_fb.tiff", 
+       device = "tiff", 
+       width = 9, 
+       height = 5, 
+       dpi = 300)
+
+```
+
+## Save workspace
+```{r, message=FALSE}
+save.image("Alpha_species.RData")
+```

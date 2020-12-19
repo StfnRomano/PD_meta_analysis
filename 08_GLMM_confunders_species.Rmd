@@ -1,0 +1,566 @@
+---
+title: "GLMM"
+author: "Stefano Romano"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+# Before you begin:
+
+These scripts were tailored for the analyses we conducted. They are not meant to be used in other contexts and are reported here as a detailed extension of the method section of our article. Please, use them at your own risk.
+
+If you use any of the material or approaches in these scripts, please, cite:
+Romano et al, 2020, *Meta-analysis of the Parkinson’s disease gut microbiome suggests alterations linked to intestinal inflammation*
+
+Thank you!
+
+```{r setup, include=FALSE}
+
+list.of.packages <- c("dplyr", "ggplot2", "dplyr", "propr", "ggpubr", "glmmTMB", "bbmle", "MuMIn", "reshape2")
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages)
+
+if (!requireNamespace("BiocManager", quietly = TRUE)){
+  install.packages("BiocManager")}
+
+
+list.of.bioc <- c("phyloseq", "microbiome")
+new.packages <- list.of.bioc[!(list.of.bioc %in% installed.packages()[,"Package"])]
+if(length(new.packages)) BiocManager::install(new.packages)
+
+library(glmmTMB)
+library(ggplot2)
+library(MuMIn)
+library(bbmle)
+library(phyloseq)
+library(microbiome)
+library(reshape2)
+library(dplyr)
+library(ggpubr)
+library(propr)
+
+```
+
+# Overview of the analyses
+Using the count tables we perform GLMM to verify the effect of gender and age on taxa abundances.
+We use the metadata provided by 5 studies.
+We calculate GLMMs with and without the variable disease status. 
+We then compare all models and select the best ones within a delta AIC of 2.
+If among these models there is even a single one that does not contain the variable disease status, we conclude that the disease status is not essential to explain the abundances of these taxa. Hence, we excluded these taxa from further analyses.
+
+Please provide the full path for the files and R objects you need to load.
+
+## Load the meta_data
+Meta data table are loaded and formatted to make them consistent to each other
+
+```{r}
+hb_meta<-read.delim("HillBurns_Meta.txt", 
+                    header = T,
+                    stringsAsFactors = F,
+                    na.strings = "NA")
+hb_meta<-hb_meta[hb_meta$age != "not applicable",]
+hb_meta$study<-rep("Hill_Burns", nrow(hb_meta))
+
+any(is.na(hb_meta)) # Check if there are NA
+
+petr_meta<-read.delim("Petrov_meta.txt", 
+                    header = T,
+                    stringsAsFactors = F,
+                    na.strings = "NA")
+any(is.na(petr_meta)) # Check if there are NA
+petr_meta$study<-rep("Petrov", nrow(petr_meta))
+
+qian_meta<-read.delim("Qian_meta.txt", 
+                    header = T,
+                    stringsAsFactors = F,
+                    na.strings = "NA")
+qian_meta<-qian_meta[, 1:6]
+qian_meta$gender..1man.2female.[qian_meta$gender..1man.2female. == 1] <- "Male"
+qian_meta$gender..1man.2female.[qian_meta$gender..1man.2female. == 2] <- "Female"
+qian_meta$gender..1man.2female.[qian_meta$gender..1man.2female. == 3] <- NA
+qian_meta<-qian_meta[!(is.na(qian_meta$gender..1man.2female.)),] # remove samples data containing NA
+qian_meta$study<-rep("Qian", nrow(qian_meta))
+
+any(is.na(qian_meta)) # Check if there are NA
+
+kes_pd_meta<-read.delim("Kes_meta_PD.txt", 
+                    header = T,
+                    stringsAsFactors = F,
+                    na.strings = "NA")
+kes_pd_meta<-data.frame(saples = paste(as.character(kes_pd_meta$PD.Case.IDs), "_136", sep = ""), gender = kes_pd_meta$Gender, age = kes_pd_meta$Age)
+kes_pd_meta$study<-rep("Keshavarzan", nrow(kes_pd_meta))
+
+any(is.na(kes_pd_meta)) # Check if there are NA
+
+kes_hc_meta<-read.delim("Kes_meta_HC.txt", 
+                    header = T,
+                    stringsAsFactors = F,
+                    na.strings = "NA")
+kes_hc_meta<-data.frame(saples = paste(as.character(kes_hc_meta$HC.Case.IDs), "_136", sep = ""), gender =  as.character(kes_hc_meta$Gender), age =  as.character(kes_hc_meta$Age))
+kes_hc_meta$study<-rep("Keshavarzan", nrow(kes_hc_meta))
+
+
+any(is.na(kes_hc_meta)) # Check if there are NA
+
+weis_meta<-read.delim("Weis_meta.txt", 
+                    header = T,
+                    stringsAsFactors = F,
+                    na.strings = "NA")
+
+weis_meta$study<-rep("Weis", nrow(weis_meta))
+
+any(is.na(weis_meta)) # Check if there are NA
+
+# Select only common confounders: gendere, age
+
+hb_meta$sex[hb_meta$sex == "male"] <-"Male"
+hb_meta$sex[hb_meta$sex == "female"] <-"Female"
+
+petr_meta$gender[petr_meta$gender== "f"] <-"Female"
+petr_meta$gender[petr_meta$gender== "m"] <-"Male"
+
+weis_meta$gender[weis_meta$gender== "f"] <-"Female"
+weis_meta$gender[weis_meta$gender== "m"] <-"Male"
+
+sample = c(as.character(kes_hc_meta$saples), as.character(kes_pd_meta$saples), hb_meta$sample_name, petr_meta$X.SampleID, qian_meta$Sample,
+                            weis_meta$sample)
+class(sample)
+gender = c(as.character(kes_hc_meta$gender), as.character(kes_pd_meta$gender), hb_meta$sex, petr_meta$gender, qian_meta$gender..1man.2female.,
+                            weis_meta$gender)
+class(gender)
+age = c(as.numeric(as.character(kes_hc_meta$age)), as.numeric(as.character(kes_pd_meta$age)), as.numeric(hb_meta$age), petr_meta$Age, qian_meta$age,
+                        weis_meta$age)
+class(age)
+
+study = c(as.character(kes_hc_meta$study), as.character(kes_pd_meta$study), hb_meta$study, petr_meta$study, qian_meta$study,
+                            weis_meta$study)
+class(stusy)
+
+
+conf<-cbind.data.frame(sample = sample, gender = gender, age=age, study =study)
+conf$sample<-as.character(conf$sample)
+nrow(conf)
+any(is.na(conf)) # There are no NA
+write.table(x = conf, file = "Table_confounders.txt",
+            row.names = F,
+            col.names = T,
+            sep = "\t",
+              quote = F)
+```
+
+### Read the Phyloseq object containing all studies and the combined dataset. These data are not rearefied and not normilized
+
+```{r}
+
+l_phylo<-readRDS("Phyloseq_list_all_studies.rds")
+sign_otu<-taxa_names(readRDS("Phyloseq_species_sign.rds")) # Load the taxa that were detected DA
+
+# Remove Euk
+l_phylo<-lapply(l_phylo, function(x) prune_taxa(taxa_names(x)[!(grepl("Eukaryota", taxa_names(x), ignore.case = TRUE))], x))
+# Check that there are not Euk left
+if(length(unlist(lapply(l_phylo, function(x) taxa_names(x)[grep("Eukary*", taxa_names(x))]))) == 0){
+  print("All Eukaryotes removed")
+}else{stop("There are still Eukaryotes sequences in the files")}
+
+# Check Chloroplasts
+for(i in 1:length(l_phylo)){
+  if(sum(grep("Chloroplast", taxa_names(l_phylo[[i]]))) > 0){
+    l_phylo[[i]]<-prune_taxa(taxa_names(l_phylo[[i]])[!(grepl("Chloropl*", taxa_names(l_phylo[[i]]), ignore.case = TRUE))], l_phylo[[i]])
+  } else {}
+}
+
+if(length(unlist(lapply(l_phylo, function(x) taxa_names(x)[grep("Chloropl*", taxa_names(x))]))) == 0){
+  print("All Chloroplast removed")
+}else{stop("There are still Chloroplast sequences in the files")}
+
+# Remove samples with 0 counts if any
+l_phylo<-lapply(l_phylo, function(x) prune_samples(sample_sums(x) > 0, x))
+
+```
+
+## Select only the samples of interest
+There is a bias in the samples, as in some studies the author sampled also control having < 40 years old. Wherease this was not the case for PD patients. 
+Hence I will only collect the samples starting form the youngest PD patient.
+
+```{r}
+rar_com<-rarefy_even_depth(l_phylo$Combined, sample.size = 10000, replace = FALSE, trimOTUs = TRUE, rngseed = 56987) # rarefy at 10000 to have enough data to limit overparametrization
+
+conf$sample<-as.character(conf$sample)
+conf$age<-as.numeric(as.character(conf$age))
+
+conf<-conf[conf$sample %in% sample_names(rar_com),] # use only samples that were included in our meta-analysis. Some other samples might have been used in the original study for other analyses (e.g. microbiome of biopsis)
+rar_com_m<-prune_samples(conf$sample, rar_com) # select in the rarefied dataset only the sample of interest
+nrow(conf) == nsamples(rar_com_m) # Check that the phyloseq object and the meta data have the same number of samples
+rar_com_sign<-prune_taxa(sign_otu, rar_com_m) # select only taxa that were detected DA
+
+# Create a df containing the metadata and the count data
+rar_map<-as.data.frame(sample_data(rar_com_sign)) # recover metadata from phyloseq
+otu<-as.data.frame(t(otu_table(rar_com_sign))) # recover counts from phyloseq
+
+conf<-conf[order(conf$sample),]
+otu<-otu[order(rownames(otu)),]
+rar_map<-rar_map[order(rownames(rar_map)),]
+all(conf$sample == rownames(otu))
+all(rownames(rar_map) == rownames(otu))
+
+# If the above is true means that all meta data, confounders, and tab have the same samples. I can combine them in a single df
+data<-cbind.data.frame(otu, rar_map, conf)
+
+# Remove the potential bias due to unbalance sampling
+d<-melt(data.frame(samle = data$sample, age = data$age, status = data$status))
+ggplot(d, aes(value, fill = status)) +
+  geom_bar()
+
+# The first Parkinson case is 43 years old. To avoid further biases I will remove everything < 43
+data<-subset(data, age >= 43)
+data<-data[,-ncol(data)]
+```
+
+
+## GLMM
+
+```{R}
+l_gm_full<-vector(mode = "list", length = (ncol(data)-5)) # create a list to wich I will append the GLMM for each taxa
+names(l_gm_full)<-names(data)[1:(ncol(data)-5)]
+data$status<-as.factor(data$status)
+data$study<-as.factor(data$study)
+data2  <- base::transform(data,age=scale(age,center=FALSE)) # rescale the variable. The authors of glmmTMB suggests that this sometimes helps to fit the model
+
+# Fit the full modles including zi inflation
+for(i in 1:length(l_gm_full)){
+  m<-glmmTMB(data[,i] ~ status * gender + status * age + (1 + status|study), data = data, family = nbinom1, ziformula = ~1,
+             control = glmmTMBControl(parallel = 2, optCtrl=list(iter.max=1e3,eval.max=1e3)))
+  mcd2<-try(glmmTMB(data2[,i] ~ status * gender + status * age +  (1 + status|study), data = data2, family = nbinom1, ziformula = ~1,
+            control = glmmTMBControl(parallel = 2, optCtrl=list(iter.max=1e3,eval.max=1e3))))
+  x<-try(summary(mcd2))
+  if(class(x) == "try-error"){
+    l_gm_full[[i]]<-m
+  } else {
+    if(!(all(is.na(summary(mcd2)$AICtab[1:4]))) & all(is.na((summary(m)$AICtab[1:4]))) ){
+        l_gm_full[[i]]<-mcd2
+    } else {l_gm_full[[i]]<-m}
+  }
+}
+
+sum(unlist(lapply(l_gm_full, function(x) all(is.na((summary(x)$AICtab[1:4]))))))
+sum(unlist(lapply(l_gm_full, function(x) all(is.na(summary(x)$coefficients$cond[,2:4])))))
+    
+# Verify whether there are some other distributions more appropriate for the data used
+for(i in 1:length(l_gm_full)){
+  if(all(is.na(summary(l_gm_full[[i]])$AICtab[1:4]))){
+    m<-update(l_gm_full[[i]], family = nbinom2)
+    if(!(all(is.na(summary(m)$AICtab[1:4])))){
+      l_gm_full[[i]]<-m
+    } else {
+      m<-try(update(l_gm_full[[i]], family = genpois))
+      if(class(m) == "try-error"){}
+      else if(!(all(is.na(summary(m)$AICtab[1:4])))){
+        l_gm_full[[i]]<-m
+      }
+    }
+  }
+}
+
+sum(unlist(lapply(l_gm_full, function(x) all(is.na((summary(x)$AICtab[1:4]))))))
+sum(unlist(lapply(l_gm_full, function(x) all(is.na(summary(x)$coefficients$cond[,2:4])))))
+
+# Fit the full models excluding zi inflation
+l_gm_nozero<-l_gm_full
+names(l_gm_nozero)<-names(l_gm_full)
+for(i in 1:length(l_gm_full)){
+  m<-glmmTMB(data[,i] ~ status * gender + status * age +   (1 + status|study), data = data, family = nbinom1, ziformula = ~0,
+            control = glmmTMBControl(parallel = 2, optCtrl=list(iter.max=1e3,eval.max=1e3)))
+  mcd2<-try(glmmTMB(data2[,i] ~ status * gender + status * age + (1 + status|study), data = data2, family = nbinom1, ziformula = ~0,
+            control = glmmTMBControl(parallel = 2, optCtrl=list(iter.max=1e3,eval.max=1e3))))
+  x<-try(summary(mcd2))
+  if(class(x) == "try-error"){
+    l_gm_nozero[[i]]<-m
+  } else {
+    if(!(all(is.na(summary(mcd2)$AICtab[1:4]))) & all(is.na((summary(m)$AICtab[1:4]))) ){
+        l_gm_nozero[[i]]<-mcd2
+    } else {l_gm_nozero[[i]]<-m}
+  }
+}
+
+sum(unlist(lapply(l_gm_nozero, function(x) all(is.na(summary(x)$coefficients$cond[,2:4])))))
+sum(unlist(lapply(l_gm_nozero, function(x) all(is.na((summary(x)$AICtab[1:4]))))))
+
+# Verify whether there are some other distributions more appropriate for the data used
+for(i in 1:length(l_gm_nozero)){
+  if(all(is.na(summary(l_gm_nozero[[i]])$AICtab[1:4]))){
+    m<-update(l_gm_nozero[[i]], family = nbinom2)
+    if(!(all(is.na(summary(m)$AICtab[1:4])))){
+      l_gm_nozero[[i]]<-m
+    } else {
+      m<-try(update(l_gm_nozero[[i]], family = genpois))
+      if(class(m) == "try-error"){}
+      else if(!(all(is.na(summary(m)$AICtab[1:4])))){
+        l_gm_nozero[[i]]<-m
+      }
+    }
+  }
+}
+
+
+sum(unlist(lapply(l_gm_nozero, function(x) all(is.na(summary(x)$coefficients$cond[,2:4])))))
+sum(unlist(lapply(l_gm_nozero, function(x) all(is.na((summary(x)$AICtab[1:4]))))))
+
+
+# Create a df where I collect the results of the comparison between zi inflated and not-inflated models
+aic<-data.frame(taxa = rep(FALSE, length(l_gm_full)),
+                           AIC1 = rep(FALSE, length(l_gm_full)),
+                           AIC2 = rep(FALSE, length(l_gm_full)),
+                           df1 = rep(FALSE, length(l_gm_full)),
+                           df2 = rep(FALSE, length(l_gm_full)),
+                           DiffAIC = rep(FALSE, length(l_gm_full)),
+                           bestmodel = rep(FALSE, length(l_gm_full)))
+
+for(i in 1:length(l_gm_full)){
+  if(any(is.na(summary(l_gm_full[[i]])$AICtab)) | any(is.na(summary(l_gm_nozero[[i]])$AICtab)) ){
+      aic$taxa[i]<-names(l_gm_full)[i]
+      aic$bestmodel[i]<-"No best. Keep PD"
+  }else{
+    b<-AICtab(l_gm_full[[i]], l_gm_nozero[[i]])
+    aic$taxa[i]<-names(l_gm_full)[i]
+    aic$AIC1[i]<-b$dAIC[1]
+    aic$AIC2[i]<-b$dAIC[2]
+    aic$df1[i]<-b$df[1]
+    aic$df2[i]<-b$df[2]
+    aic$DiffAIC[i]<-b$dAIC[1] - b$dAIC[2]
+    aic$bestmodel[i]<-rownames(as.data.frame(b))[1]
+  }
+}
+
+# Select the best model between zi-inflated and non-inflated models
+l_gm_clean2<-l_gm_full
+for(i in 1:length(l_gm_full)){
+  if(abs(aic$DiffAIC[i]) == 0 & is.na(aic$DiffAIC[i]) == 0 ){
+    l_gm_clean2[[i]]<-l_gm_full[[i]]
+  } else if(aic[i, "bestmodel"] == "l_gm_nozero[[i]]" & abs(aic$DiffAIC[i]) >= 2 ){
+    l_gm_clean2[[i]]<-l_gm_nozero[[i]]
+  } else if(aic[i, "bestmodel"] == "l_gm_full[[i]]" & abs(aic$DiffAIC[i]) >= 2  ){ 
+    l_gm_clean2[[i]]<-l_gm_nozero[[i]]
+  } else if(aic[i, "bestmodel"] == "l_gm_nozero[[i]]" & abs(aic$DiffAIC[i]) < 2){
+    l_gm_clean2[[i]]<-l_gm_full[[i]]
+  } else if(aic[i, "bestmodel"] == "l_gm_full[[i]]" & abs(aic$DiffAIC[i]) < 2  ){ 
+  l_gm_clean2[[i]]<-l_gm_nozero[[i]]
+  }
+}
+
+sum(unlist(lapply(l_gm_clean2, function(x) all(is.na(summary(x)$coefficients$cond[,2:4])))))
+sum(unlist(lapply(l_gm_clean2, function(x) all(is.na((summary(x)$AICtab[1:4]))))))
+
+
+# Try to select the best model
+# Use a backward approach to eliminate each single term one at the time
+
+# No age
+l_gm_noage<-l_gm_clean2
+for(i in 1:length(l_gm_clean2)){
+  l_gm_noage[[i]]<-update(l_gm_clean2[[i]],  ~ status*gender +  (1+status|study))
+} 
+l_gm_noage_noint<-l_gm_clean2
+for(i in 1:length(l_gm_clean2)){
+  l_gm_noage_noint[[i]]<-update(l_gm_clean2[[i]],  ~ status+gender +  (1+status|study))
+}
+l_gm_noage_norandom<-l_gm_clean2
+for(i in 1:length(l_gm_clean2)){
+  l_gm_noage_norandom[[i]]<-update(l_gm_clean2[[i]],  ~ status*gender +  (1|study))
+}
+l_gm_noage_norandom_noint<-l_gm_clean2
+for(i in 1:length(l_gm_clean2)){
+  l_gm_noage_norandom_noint[[i]]<-update(l_gm_clean2[[i]],  ~ status+gender +  (1|study))
+}
+
+# No gender
+l_gm_nogender<-l_gm_clean2
+for(i in 1:length(l_gm_clean2)){
+  l_gm_nogender[[i]]<-update(l_gm_clean2[[i]],  ~ status*age +  (1+status|study))
+}    
+l_gm_nogender_noint<-l_gm_clean2
+for(i in 1:length(l_gm_clean2)){
+  l_gm_nogender_noint[[i]]<-update(l_gm_clean2[[i]],  ~ status+age +  (1+status|study))
+}    
+l_gm_nogender_norandom<-l_gm_clean2
+for(i in 1:length(l_gm_clean2)){
+  l_gm_nogender_norandom[[i]]<-update(l_gm_clean2[[i]],  ~ status*age +  (1|study))
+}
+l_gm_nogender_norandom_noint<-l_gm_clean2
+for(i in 1:length(l_gm_clean2)){
+  l_gm_nogender_norandom_noint[[i]]<-update(l_gm_clean2[[i]],  ~ status+age +  (1|study))
+}
+
+
+# Full no interaction
+l_gm_noint<-l_gm_clean2
+for(i in 1:length(l_gm_clean2)){
+  l_gm_noint[[i]]<-update(l_gm_clean2[[i]],  ~ status + age + gender + (1+status|study))
+}
+l_gm_noint_norandom<-l_gm_clean2
+for(i in 1:length(l_gm_clean2)){
+  l_gm_noint_norandom[[i]]<-update(l_gm_clean2[[i]],  ~ status + age + gender + (1|study))
+}
+l_gm_noageint<-l_gm_clean2
+for(i in 1:length(l_gm_clean2)){
+  l_gm_noageint[[i]]<-update(l_gm_clean2[[i]],  ~ status + age +  status*gender + (1+status|study))
+}    
+l_gm_noageint_norandom<-l_gm_clean2
+for(i in 1:length(l_gm_clean2)){
+  l_gm_noageint_norandom[[i]]<-update(l_gm_clean2[[i]],  ~ status + age +  status*gender + (1|study))
+}    
+l_gm_nogenderint<-l_gm_clean2
+for(i in 1:length(l_gm_clean2)){
+  l_gm_nogenderint[[i]]<-update(l_gm_clean2[[i]],  ~ status*age + gender + (1+status|study))
+}   
+l_gm_nogenderint_norandom<-l_gm_clean2
+for(i in 1:length(l_gm_clean2)){
+  l_gm_nogenderint_norandom[[i]]<-update(l_gm_clean2[[i]],  ~ status*age + gender + (1|study))
+}   
+
+
+# Only status
+l_gm_onlystatus<-l_gm_clean2
+for(i in 1:length(l_gm_clean2)){
+  l_gm_onlystatus[[i]]<-update(l_gm_clean2[[i]],  ~ status + (1+status|study))
+} 
+l_gm_onlystatus_norandom<-l_gm_clean2
+for(i in 1:length(l_gm_clean2)){
+  l_gm_onlystatus_norandom[[i]]<-update(l_gm_clean2[[i]], ~ status + (1|study))
+}   
+
+# Only age/gender
+l_gm_onlygender<-l_gm_clean2
+for(i in 1:length(l_gm_clean2)){
+  l_gm_onlygender[[i]]<-update(l_gm_clean2[[i]], ~ gender + (1|study))
+}    
+l_gm_onlyage<-l_gm_clean2
+for(i in 1:length(l_gm_clean2)){
+  l_gm_onlyage[[i]]<-update(l_gm_clean2[[i]], ~ age + (1|study))
+}    
+l_gm_nostatus<-l_gm_clean2
+for(i in 1:length(l_gm_clean2)){
+  l_gm_nostatus[[i]]<-update(l_gm_clean2[[i]],  ~ gender + age + (1|study))
+}
+
+
+# Create a list of models and compare them, collecting the results in a df
+model_by_taxa<-vector(mode = "list", length = length(l_gm_clean2))
+names(model_by_taxa)<-names(l_gm_clean2)
+models<-list(l_gm_clean2, 
+             l_gm_nostatus, 
+             l_gm_noage, 
+             l_gm_nogender, 
+             l_gm_noageint, 
+             l_gm_nogenderint, 
+             l_gm_onlystatus, 
+             l_gm_onlystatus_norandom, 
+             l_gm_onlygender, 
+             l_gm_onlyage, 
+             l_gm_noint, 
+             l_gm_noint_norandom, 
+             l_gm_noage_norandom, 
+             l_gm_noage_norandom_noint, 
+             l_gm_noage_noint, 
+             l_gm_nogender_noint, 
+             l_gm_nogender_norandom, 
+             l_gm_nogender_norandom_noint,
+             l_gm_noageint_norandom, 
+             l_gm_nogenderint_norandom)
+
+
+names(models)<-c("l_gm_clean2",
+                 "l_gm_nostatus", 
+                 "l_gm_noage", 
+                 "l_gm_nogender", 
+                 "l_gm_noageint", 
+                 "l_gm_nogenderint", 
+                 "l_gm_onlystatus", 
+                 "l_gm_onlystatus_norandom", 
+                 "l_gm_onlygender", 
+                 "l_gm_onlyage", 
+                 "l_gm_noint", 
+                 "l_gm_noint_norandom", 
+                 "l_gm_noage_norandom", 
+                 "l_gm_noage_norandom_noint", 
+                 "l_gm_noage_noint",
+                 "l_gm_nogender_noint",
+                 "l_gm_nogender_norandom", 
+                 "l_gm_nogender_norandom_noint", 
+                 "l_gm_noageint_norandom", 
+                 "l_gm_nogenderint_norandom")
+
+model_by_taxa<-lapply(model_by_taxa, function(x) x<-vector(mode = "list", length = length(models)))
+
+for(i in 1:length(model_by_taxa)){
+  for(m in 1:length(models)){
+    x<-try(model.sel(models[[m]][[i]]))
+    if(class(x) != "try-error"){
+      model_by_taxa[[i]][[m]]<-models[[m]][[i]]
+      names(model_by_taxa[[i]])[m]<-names(models)[m]
+    }
+  }
+  model_by_taxa[[i]]<-model_by_taxa[[i]][!(is.na(names(model_by_taxa[[i]])))]
+}
+
+
+
+l_mod_sel2<-model_by_taxa
+for(i in 1:length(l_mod_sel2)){
+  l_mod_sel2[[i]]<-model.sel(model_by_taxa[[i]],
+                             rank =  AIC)
+}
+
+```
+
+## Detect the taxa that have abundances mainly affected by age and/or gender
+
+```{R}
+
+# Take a look at the results of the comparisons and verify whether there is a single best model that explains the data
+for(i in 1:length(l_mod_sel2)){
+  l_mod_sel2[[i]]$taxa<-rep(names(l_mod_sel2)[[i]], nrow(l_mod_sel2[[i]]))
+  l_mod_sel2[[i]]$models<-rownames(as.data.frame(l_mod_sel2[[i]]))
+
+}
+
+tab<-do.call(rbind.fill, l_mod_sel2)
+tab<-cbind.data.frame(taxa = tab$taxa, models = tab$models, tab[-1*c(which(names(tab) == "taxa"), which(names(tab) == "models"))])
+
+# Save the table containing the model comparisons
+write.table(tab, file = "GLMM_species.txt", 
+            sep = "\t", 
+            quote = F, 
+            row.names = F, 
+            na = "NA", 
+            col.names = T)
+
+confounded<-vector()
+taxa_w_more_model<-vector()
+for(i in 1:length(l_mod_sel2)){
+  x<-l_mod_sel2[[i]]
+  if( all(is.na(x$delta))){
+    print(paste("Model not estimated for taxa", names(l_mod_sel2)[i], sep = " "))
+    print(" ", quote = FALSE)
+    print(" ", quote = FALSE)
+    } else {
+      models<-rownames(subset(as.data.frame(x), delta <= 2))
+      if(all(models == "l_gm_onlygender" | models == "l_gm_nostatus" | models == "l_gm_onlyage")){
+      confounded<-c(confounded, names(l_mod_sel2)[[i]])
+      }
+    }
+}
+
+
+if(length(confounded) == 0){
+  print("No taxa are directly confounder by age/gender. You need to investigate the model evaluation manually")
+}else{print(paste("List of taxa confounded", confounded, sep = " "))}
+
+#Save RDS
+saveRDS(confounded, "Confounded_species.rds")
+```
+
+## Save workspace
+
+```{r}
+save.image("Confounders_species.RData")
+```

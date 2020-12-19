@@ -1,0 +1,138 @@
+---
+title: "DA_ANCOM"
+author: "Stefano Romano"
+output: html_document
+---
+# Before you begin:
+
+These scripts were tailored for the analyses we conducted. They are not meant to be used in other contexts and are reported here as a detailed extension of the method section of our article. Please, use them at your own risk.
+
+If you use any of the material or approaches in these scripts, please, cite:
+Romano et al, 2020, *Meta-analysis of the Parkinson’s disease gut microbiome suggests alterations linked to intestinal inflammation*
+
+Thank you!
+
+
+```{r setup, include=FALSE}
+
+list.of.packages <- c("dplyr", "reshape2", "dplyr", "propr", "doParallel", "foreach")
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages)
+
+if (!requireNamespace("BiocManager", quietly = TRUE)){
+  install.packages("BiocManager")}
+
+
+list.of.bioc <- c("phyloseq", "zCompositions", "propr", "microbiome")
+new.packages <- list.of.bioc[!(list.of.bioc %in% installed.packages()[,"Package"])]
+if(length(new.packages)) BiocManager::install(new.packages)
+
+
+library(phyloseq)
+library(doParallel)
+library(foreach)
+library(dplyr)
+
+library(microbiome)
+library(reshape2)
+library(devtools)
+library(zCompositions)
+library(propr)
+source("ancom_v2.0.R")
+
+```
+
+# Overview of the analyses
+We will perform a differential abundance analysis using ANCOM2
+Please provide the full path to the files and R objects that need to be loaded.
+
+## Load the list pf phyloseq objects
+```{r load, message=FALSE}
+l_phylo<-readRDS("Phyloseq_list_all_studies.rds")
+```
+
+## Remove Eukaryotes and Chloroplast then format data
+```{r, message=F}
+# Remove Eukaryotes
+l_phylo<-lapply(l_phylo, function(x) prune_taxa(taxa_names(x)[!(grepl("Eukaryota", taxa_names(x), ignore.case = TRUE))], x))
+
+# Check that there are not Euk left
+if(length(unlist(lapply(l_phylo, function(x) taxa_names(x)[grep("Eukary*", taxa_names(x))]))) == 0){
+  print("All Eukaryotes removed")
+}else{stop("There are still Eukaryotes sequences in the files")}
+
+# Check Chloroplasts
+for(i in 1:length(l_phylo)){
+  if(sum(grep("Chloroplast", taxa_names(l_phylo[[i]]))) > 0){
+    l_phylo[[i]]<-prune_taxa(taxa_names(l_phylo[[i]])[!(grepl("Chloropl*", taxa_names(l_phylo[[i]]), ignore.case = TRUE))], l_phylo[[i]])
+  } else {}
+}
+
+if(length(unlist(lapply(l_phylo, function(x) taxa_names(x)[grep("Chloropl*", taxa_names(x))]))) == 0){
+  print("All Chloroplast removed")
+}else{stop("There are still Chloroplast sequences in the files")}
+
+# Remove samples that have potentially 0 counts
+l_phylo<-lapply(l_phylo, function(x) prune_samples(sample_sums(x) > 0, x))
+
+# Format data fro ANCOM (Needs to have easy taxa names)
+l_maps<-lapply(l_phylo, function(x) data.frame(Sample.ID = as.character(sample_names(x)), meta(x)))
+
+l_phylo_spec<-l_phylo
+for(i in 1:length(l_phylo)){
+  taxa_names(l_phylo_spec[[i]]) <- paste0("Species", seq(ntaxa(l_phylo[[i]])))
+}
+
+l_spec_taxa<-l_phylo
+for(i in 1:length(l_phylo)){
+  l_spec_taxa[[i]] <- data.frame(taxa = taxa_names(l_phylo[[i]]), spec = taxa_names(l_phylo_spec[[i]]))
+}
+
+l_otu<-lapply(l_phylo_spec, function(x) data.frame(Sample.ID = sample_names(x), t(otu_table(x))))
+
+# Tranform variales into factors
+for(i in 1:length(l_maps)){
+  l_maps[[i]]$Sample.ID<-as.factor(l_maps[[i]]$Sample.ID)
+  l_maps[[i]]$status<-as.factor(l_maps[[i]]$status)
+  l_maps[[i]]$study<-as.factor(l_maps[[i]]$study)
+
+}
+
+# ANCOM using parallel
+l_anc<-l_maps
+cl<-makeCluster(10)
+registerDoParallel(cl)
+l_anc<-foreach(z = 1:(length(l_otu)-1),
+               .packages = c("exactRankTests","coin", "nlme", "ggplot2", "dplyr")) %dopar% {
+  x<-ANCOM(otu_data  = l_otu[[z]],
+           meta_data  = l_maps[[z]],
+           zero_cut = 0.95,
+           p_adjust_method = "BH",
+           alpha = 0.05,
+           main_var = "status",
+           rand_formula = NULL,
+           adj_formula = NULL)
+  return(x)
+}
+stopCluster(cl)
+
+# Random effect ANCOM for the combined dataset
+l_anc[[length(l_otu)]]<-ANCOM(otu_data  = l_otu[[length(l_otu)]],
+                              meta_data  = l_maps[[length(l_otu)]],
+                              zero_cut = 0.975,
+                              p_adjust_method = "BH",
+                              alpha = 0.05,
+                              main_var = "status",
+                              rand_formula = "~ 1 + status|study",
+                              adj_formula = NULL)
+
+
+saveRDS(l_anc, "List_ancom_Species.rds")
+saveRDS(l_spec_taxa, "List_Spec_taxa_Species.rds")
+```
+
+# Save wrokspace
+```{R}
+save.image("Species_ANCOM_v2.0_.RData")
+
+```

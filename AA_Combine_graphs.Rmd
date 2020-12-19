@@ -1,0 +1,604 @@
+---
+title: "Combine graphs"
+author: "Stefano Romano"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+# Before you begin:
+
+These scripts were tailored for the analyses we conducted. They are not meant to be used in other contexts and are reported here as a detailed extension of the method section of our article. Please, use them at your own risk.
+
+If you use any of the material or approaches in these scripts, please, cite:
+Romano et al, 2020, *Meta-analysis of the Parkinson’s disease gut microbiome suggests alterations linked to intestinal inflammation*
+
+Thank you!
+
+# Load Packages
+
+```{r setup, include=FALSE}
+list.of.packages <- c("ggplot2", "dplyr", "reshape2", "dplyr", "devtools", "ggpubr")
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages)
+
+if (!requireNamespace("BiocManager", quietly = TRUE)){
+  install.packages("BiocManager")}
+
+
+list.of.bioc <- c("phyloseq", "microbiome")
+new.packages <- list.of.bioc[!(list.of.bioc %in% installed.packages()[,"Package"])]
+if(length(new.packages)) BiocManager::install(new.packages)
+
+
+library(phyloseq)
+library(microbiome)
+library(ggpubr)
+library(ggplot2)
+library(reshape2)
+library(dplyr)
+library(grDevices)
+
+```
+
+# Overview of the analyses
+This script was used to create some of the figures in the manuscript.
+
+Please, provide the full path to the files and R objects that need to be loaded.
+
+# Combine dbRDA graphs for TSS
+```{r, message= F}
+g_species<-readRDS("dbRDA_species_propr.rds")
+g_genus<-readRDS("dbRDA_genus_propr.rds")
+g_family<-readRDS("dbRDA_family_propr.rds")
+
+g_propr<-gridExtra::grid.arrange(g_family, g_genus, g_species, nrow = 3, heights = c(1.2,1,1),
+                        top = "dbRDA-JSD on TSS")
+ggsave(g_propr, filename = "dbRDA_prop.svg",
+       width = 12, height = 12, device = "svg", dpi = 300)
+```
+
+# Combine graphs for VST
+```{r, message= F}
+g_species<-readRDS("dbRDA_species_VST.rds")
+g_genus<-readRDS("dbRDA_genus_VST.rds")
+g_family<-readRDS("dbRDA_family_VST.rds")
+
+g_propr<-gridExtra::grid.arrange(g_family, g_genus, g_species, nrow = 3, heights = c(1.2,1,1),
+                                 top = "dbRDA-Euclidean on VST")
+ggsave(g_propr, filename = "dbRDA_VST.svg",
+       width = 12, height = 12, device = "svg", dpi = 300)
+```
+
+# Combine graphs for CLR
+```{r, message= F}
+g_species<-readRDS("dbRDA_species_CLR.rds")
+g_genus<-readRDS("dbRDA_genus_CLR.rds")
+g_family<-readRDS("dbRDA_family_CLR.rds")
+
+g_propr<-gridExtra::grid.arrange(g_family, g_genus, g_species, nrow = 3, heights = c(1.2,1,1),
+                                 top = "dbRDA-Euclidean on CLR")
+ggsave(g_propr, filename = "dbRDA_CLR.svg",
+       width = 12, height = 12, device = "svg", dpi = 300)
+```
+
+## Plot overall DA taxa
+```{r}
+# Load files
+da_f<-readRDS("DA_Family.rds")
+da_g<-readRDS("DA_genus.rds")
+da_s<-readRDS("DA_species.rds")
+random_f<-readRDS("Random_sign_all_family.rds")
+random_g<-readRDS("Random_sign_all_genus.rds")
+random_s<-readRDS("Random_sign_all_species.rds")
+
+# Format df and make graphs
+
+da_s$.id<-da_s$.id %>% as.character()
+da_s$method<-da_s$method %>% as.character()
+
+da_s<-rbind.data.frame(da_s, c(F, nrow(random_s), F))
+da_s$.id[nrow(da_s)]<-"Pooled_results"
+da_s$method[nrow(da_s)]<-"Random effect meta."
+
+da_s$.id[da_s$.id == "Combined"] <- "Pooled_data"
+da_s$method[da_s$method == "Coin_propor"] <- "WMW_TSS"
+da_s$method[da_s$method == "DeSeq2_GMPR"] <- "DESeq"
+
+da_s$method<-factor(da_s$method, levels = c("Random effect meta.", "WMW_TSS","DESeq","ANCOM","Consensus"))
+
+da_s$.id<-factor(da_s$.id, levels = unique(da_s$.id))
+s<-ggplot(da_s, aes(nsign, .id, fill = method)) +
+  geom_point(pch = 21, alpha = 0.7, size = 4.5) +
+  theme_bw() +
+  labs(x = "#DA taxa", fill = "Method") +
+  scale_fill_brewer(type = "div", palette = 7) +
+  theme(axis.title.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.title.x = element_text(size = 16),
+        legend.text = element_text(size =14),
+        legend.title = element_text(size = 14, face = "bold"),
+        plot.margin = margin(15,2,2,2),
+        axis.text.x = element_text(size = 14))
+
+
+da_g$.id<-da_g$.id %>% as.character()
+da_g$method<-da_g$method %>% as.character()
+
+da_g<-rbind.data.frame(da_g, c(F, nrow(random_g), F))
+da_g$.id[nrow(da_g)]<-"Pooled_results"
+da_g$method[nrow(da_g)]<-"Random effect meta."
+
+da_g$.id[da_g$.id == "Combined"] <- "Pooled_data"
+da_g$method[da_g$method == "Coin_propor"] <- "WMW_TSS"
+da_g$method[da_g$method == "DeSeq2_GMPR"] <- "DESeq"
+
+da_g$method<-factor(da_g$method, levels = c("Random effect meta.", "WMW_TSS","DESeq","ANCOM","Consensus"))
+da_g$.id<-factor(da_g$.id, levels = unique(da_g$.id))
+
+g<-ggplot(da_g, aes(nsign, .id, fill = method)) +
+  geom_point(pch = 21, alpha = 0.7, size = 4.5) +
+  theme_bw() +
+  labs(x = "#DA taxa", fill = "Method") +
+  scale_fill_brewer(type = "div", palette = 7) +
+  theme(axis.title.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.title.x = element_text(size = 16),
+        legend.text = element_text(size =14),
+        legend.title = element_text(size = 14, face = "bold"),
+        plot.margin = margin(15,2,2,2),
+        axis.text.x = element_text(size = 14))
+
+
+da_f$.id<-da_f$.id %>% as.character()
+da_f$method<-da_f$method %>% as.character()
+
+da_f<-rbind.data.frame(da_f, c(F, nrow(random_f), F))
+da_f$.id[nrow(da_f)]<-"Pooled_results"
+da_f$method[nrow(da_f)]<-"Random effect meta."
+
+da_f$.id[da_f$.id == "Combined"] <- "Pooled_data"
+da_f$method[da_f$method == "Coin_propor"] <- "WMW_TSS"
+da_f$method[da_f$method == "DeSeq2_GMPR"] <- "DESeq"
+
+da_f$method<-factor(da_f$method, levels = c("Random effect meta.", "WMW_TSS","DESeq","ANCOM","Consensus"))
+da_f$.id<-factor(da_f$.id, levels = unique(da_f$.id))
+
+f<-ggplot(da_f, aes(nsign, .id, fill = method)) +
+  geom_point(pch = 21, alpha = 0.7, size = 4.5) +
+  theme_bw() +
+  labs(x = "#DA taxa", fill = "Method", y = "Study") +
+  scale_fill_brewer(type = "div", palette = 7) +
+  theme(axis.title.x = element_text(size = 16),
+        axis.title.y = element_text(size = 16),
+        legend.text = element_text(size =14),
+        legend.title = element_text(size = 14, face = "bold"),
+        plot.margin = margin(15,2,2,2),
+        axis.text.x = element_text(size = 14),
+        axis.text.y = element_text(size = 14))
+
+# Combine graphs and save
+
+g_c<-ggarrange(f,g,s, common.legend = T, 
+                font.label = list(size = 12), label.x = 0.15, label.y = 0.975, ncol = 3,
+                labels = c("a: Family", "b: Genus", "c: Species"),
+                hjust = c(-1.3,0.7,0.6), 
+                vjust = c(-0.1,-0.1,-0.1),
+                widths = c(1.35,1,1),
+                align = "h") 
+
+title1=text_grob( "Number of differentially abundant taxa", size = 18, face = "bold")
+
+g_cf<-annotate_figure(g_c, top = title1)
+
+ggsave(g_cf, 
+       filename = "/home/stefano/Desktop/Lotus_PD/07_R_Markdown_9_Sept_2020_noChloro_revision_all10/04_05_Figures/DA_all.tiff",
+       device = "tiff", 
+       width = 13, 
+       height = 6, 
+       dpi = 300)
+
+```
+
+## Combine Adonis plots
+```{r}
+# Load files
+prop<-readRDS("Adonis_species_prop.rds")
+vst<-readRDS("Adonis_species_VST.rds")
+clr<-readRDS("Adonis_species_CLR.rds")
+
+
+prop_g<-readRDS("Adonis_genus_prop.rds")
+vst_g<-readRDS("Adonis_genus_VST.rds")
+clr_g<-readRDS("dbRDA_genus_CLR.rds")
+
+prop_f<-readRDS("Adonis_family_prop.rds")
+vst_f<-readRDS("Adonis_family_VST.rds")
+clr_f<-readRDS("Adonis_family_CLR.rds")
+
+# Format dfs and make graphs
+all<-rbind.data.frame(prop, vst,clr)
+all$Study<-factor(all$Study, levels = unique(all$Study))
+all$Significant<-as.character(all$Significant)
+all$Significant<-factor(all$Significant, levels = c("Not_significant","Significant [0.05<p<0.1]","Significant [p<0.05]"))
+all$Index[all$Index == "Bray_prop"]<-"BC_TSS"
+all$Index[all$Index == "Bray_VST"]<-"BC_VST"
+all$Index[all$Index == "JSD_prop"]<-"JSD_TSS"
+
+s<-ggplot(all, aes(R2, Study, color = Index)) +
+  geom_point(colour = "black", size = 4.8, aes(shape = Significant)) +
+  geom_point(size = 4, aes(shape = Significant)) +
+  theme_bw() +
+  labs(shape = "Significance") +
+  theme(axis.text.y = element_blank(),
+        axis.title.y = element_blank(), 
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 14),legend.text.align = 0, legend.text = element_text(size = 12),
+        legend.title = element_text(size = 14, face = "bold"), plot.margin = unit(c(7,2,2,2), units = "mm")) + 
+  scale_x_continuous(limits = c(0,8), breaks = c(0,1,2,3,4,5,6,7,8,9)) +
+  scale_shape_manual(values=c(15,16,17)) +
+  scale_color_viridis_d()
+
+all_g<-rbind.data.frame(prop_g, vst_g, clr_g)
+all_g$Study<-factor(all_g$Study, levels = unique(all_g$Study))
+all_g$Significant<-as.character(all_g$Significant)
+all_g$Significant<-factor(all_g$Significant, levels = c("Not_significant","Significant [0.05<p<0.1]","Significant [p<0.05]"))
+
+all_g$Index[all_g$Index == "Bray_prop"]<-"BC_TSS"
+all_g$Index[all_g$Index == "Bray_VST"]<-"BC_VST"
+all_g$Index[all_g$Index == "JSD_prop"]<-"JSD_TSS"
+
+g<-ggplot(all_g, aes(R2, Study, color = Index)) +
+  geom_point(colour = "black", size = 4.8, aes(shape = Significant)) +
+  geom_point(size = 4, aes(shape = Significant)) +
+  theme_bw() +
+  labs(shape = "Significance") +
+  theme(axis.text.y = element_blank(),
+        axis.title.y = element_blank(), axis.title.x = element_text(size =14),
+        axis.text.x = element_text(size = 14),legend.text.align = 0, legend.text = element_text(size = 12),
+        legend.title = element_text(size = 14, face = "bold"), plot.margin = unit(c(7,2,2,2), units = "mm")) + 
+  scale_x_continuous(breaks = c(0,1,2,3,4,5,6,7,8,9)) +
+    scale_shape_manual(values=c(15,16,17)) +
+    scale_color_viridis_d() +
+  xlab(expression(Proportion~of~variance~R^{"2"}))
+
+all_f<-rbind.data.frame(prop_f, vst_f, clr_f)
+all_f$Study<-factor(all_f$Study, levels = unique(all_f$Study))
+all_f$Significant<-as.character(all_f$Significant)
+all_f$Significant<-factor(all_f$Significant, levels = c("Not_significant","Significant [0.05<p<0.1]","Significant [p<0.05]"))
+
+all_f$Index[all_f$Index == "Bray_prop"]<-"BC_TSS"
+all_f$Index[all_f$Index == "Bray_VST"]<-"BC_VST"
+all_f$Index[all_f$Index == "JSD_prop"]<-"JSD_TSS"
+
+f<-ggplot(all_f, aes(R2, Study, color = Index)) +
+  geom_point(colour = "black", size = 4.8, aes(shape = Significant)) +
+  geom_point(size = 4, aes(shape = Significant)) +
+  theme_bw() +
+  labs(shape = "Significance") +
+  ylab("Study") +
+  theme(legend.position = "none",
+        axis.title.x = element_blank(), axis.text.y = element_text(size = 14),axis.title.y = element_text(size = 14),
+        axis.text.x = element_text(size = 14),legend.text.align = 0, legend.text = element_text(size = 12),
+        legend.title = element_text(size = 14, face = "bold"), plot.margin = unit(c(7,2,2,2), units = "mm")) + 
+  scale_x_continuous(limits = c(0,13), breaks = c(0,1,2,3,4,5,6,7,8,9,10,11,12,13,14)) +
+  scale_shape_manual(values=c(15,16,17)) +
+  scale_color_viridis_d() 
+
+# Combine graphs and save
+(g_c<-ggarrange(f,g,s, common.legend = T, align = "h",
+               font.label = list(size = 14.5), label.x = 0.85, label.y = 0.975, ncol = 3,
+             labels = c("a: Family", "b: Genus", "c: Species"), 
+             hjust  = c(3.25,3.4,3), 
+             vjust = c(0.5,0.5,0.5),
+             widths = c(1.25,0.85,0.85)))
+(g_cf<-annotate_figure(g_c, top = text_grob("PERMANOVA: Proportion of variance explained by disease status", size = 16, face = "bold")))
+
+
+ggsave(g_cf, filename = "ADONIS.svg",
+       device = "svg", 
+       width = 13, 
+       height = 6, 
+       dpi = 300)
+```
+
+# Combine comparison with and without Scheperjans
+```{R}
+#Picrust
+load("Combine_DA_metacyc.RData")
+taxa_wschep_p<-random_only_sign_store
+load("Combine_DA_metacyc_noSchep.RData")
+taxa_no_schep_p<-random_only_sign
+uneven<-c(setdiff(taxa_wschep_p$statistic, taxa_no_schep_p$statistic), setdiff(taxa_no_schep_p$statistic, taxa_wschep_p$statistic))
+taxa_wschep_p<-subset(taxa_wschep_p, statistic %in% uneven)
+taxa_no_schep_p<-subset(taxa_no_schep_p, statistic %in% uneven)
+
+taxa_wschep_p$schep<-rep("Scheperjans included", nrow(taxa_wschep_p))
+taxa_no_schep_p$schep<-rep("Scheperjans excluded", nrow(taxa_no_schep_p))
+
+dfp<-rbind.data.frame(taxa_wschep_p, taxa_no_schep_p)
+
+# Make graphs
+psp<-ggplot(dfp, aes(y=TE.random, 
+                        ymax=upper.random, 
+                        ymin=lower.random,
+                        x=reorder(statistic, TE.random))) + 
+  geom_errorbar(width=0.2) + 
+  geom_point(aes(fill = seTE.random), size = 3.5, pch = 21) +  
+  coord_flip() + 
+  geom_hline(yintercept=0) + theme_bw() + labs(y="Mean difference in CLR (95% CI)") +
+  facet_wrap(~schep) +
+  xlab("Metacyc Pathways") +
+  scale_fill_viridis_c() +
+  labs(fill = "SE")+
+  theme(axis.title.x = element_text(size = 14),
+        axis.title.y = element_text(size = 14),
+        axis.text.x = element_text(size = 12),
+        axis.text.y = element_text(size = 12),
+        strip.text.x = element_text(size = 12))
+
+# Family
+load("Combine_DA_family_b.RData")
+taxa_wschep_f<-random.sign.all
+load("Combine_DA_family_b_noSchep.RData")
+taxa_no_schep_f<-random.sign.all
+uneven_f<-c(setdiff(taxa_wschep_f$statistic, taxa_no_schep_f$statistic), setdiff(taxa_no_schep_f$statistic, taxa_wschep_f$statistic))
+
+taxa_wschep_f<-subset(taxa_wschep_f, statistic %in% uneven_f)
+taxa_no_schep_f<-subset(taxa_no_schep_f, statistic %in% uneven_f)
+
+taxa_wschep_f$schep<-rep("Scheperjans included", nrow(taxa_wschep_f))
+taxa_no_schep_f$schep<-rep("Scheperjans excluded", nrow(taxa_no_schep_f))
+df_f<-rbind.data.frame(taxa_wschep_f, taxa_no_schep_f)
+
+# Make graph
+fsp<-ggplot(df_f, aes(y=TE.random, 
+                        ymax=upper.random, 
+                        ymin=lower.random,
+                        x=reorder(statistic, TE.random))) + 
+  geom_errorbar(width=0.2) + 
+  geom_point(aes(fill = seTE.random), size = 4, pch = 21) +  
+  coord_flip() + 
+  geom_hline(yintercept=0) + theme_bw() + labs(y="Mean difference in CLR (95% CI)") +
+  facet_wrap(~schep) +
+  xlab("Taxa: Family") +
+  scale_fill_viridis_c() +
+  labs(fill = "SE") +
+  theme(axis.title.x = element_text(size = 14),
+        axis.title.y = element_text(size = 14),
+        axis.text.x = element_text(size = 12),
+        axis.text.y = element_text(size = 12),
+        strip.text.x = element_text(size = 12))
+# Genus
+
+load("Combine_DA_genus_b.RData")
+taxa_wschep_g<-random.sign.all
+load("Combine_DA_genus_b_noSchep.RData")
+taxa_no_schep_g<-random.sign.all
+uneven_g<-c(setdiff(taxa_wschep_g$statistic, taxa_no_schep_g$statistic), setdiff(taxa_no_schep_g$statistic, taxa_wschep_g$statistic))
+taxa_wschep_g<-subset(taxa_wschep_g, statistic %in% uneven_g)
+taxa_no_schep_g<-subset(taxa_no_schep_g, statistic %in% uneven_g)
+
+taxa_wschep_g$schep<-rep("Scheperjans included", nrow(taxa_wschep_g))
+taxa_no_schep_g$schep<-rep("Scheperjans excluded", nrow(taxa_no_schep_g))
+
+dfg<-rbind.data.frame(taxa_wschep_g, taxa_no_schep_g)
+
+# Make graph
+gsp<-ggplot(dfg, aes(y=TE.random, 
+                        ymax=upper.random, 
+                        ymin=lower.random,
+                        x=reorder(statistic, TE.random))) + 
+  geom_errorbar(width=0.2) + 
+  geom_point(aes(fill = seTE.random), size = 4, pch = 21) +  
+  coord_flip() + 
+  geom_hline(yintercept=0) + theme_bw() + labs(y="Mean difference in CLR (95% CI)") +
+  facet_wrap(~schep) +
+  xlab("Taxa: Genus") +
+  scale_fill_viridis_c() +
+  labs(fill = "SE") +
+  theme(axis.title.x = element_text(size = 14),
+        axis.title.y = element_text(size = 14),
+        axis.text.x = element_text(size = 12),
+        axis.text.y = element_text(size = 12),
+        strip.text.x = element_text(size = 12))
+
+
+# Species
+load("Combine_DA_species_b.RData")
+taxa_wschep_s<-random.sign.all
+load("Combine_DA_species_b_noSchep.RData")
+taxa_no_schep_s<-random.sign.all
+uneven_s<-c(setdiff(taxa_wschep_s$statistic, taxa_no_schep_s$statistic), setdiff(taxa_no_schep_s$statistic, taxa_wschep_s$statistic))
+taxa_wschep_s<-subset(taxa_wschep_s, statistic %in% uneven_s)
+taxa_no_schep_s<-subset(taxa_no_schep_s, statistic %in% uneven_s)
+
+taxa_wschep_s$schep<-rep("Scheperjans included", nrow(taxa_wschep_s))
+taxa_no_schep_s$schep<-rep("Scheperjans excluded", nrow(taxa_no_schep_s))
+
+dfs<-rbind.data.frame(taxa_wschep_s, taxa_no_schep_s)
+
+# Make graph
+ssp<-ggplot(dfs, aes(y=TE.random, 
+                        ymax=upper.random, 
+                        ymin=lower.random,
+                        x=reorder(statistic, TE.random))) + 
+  geom_errorbar(width=0.2) + 
+  geom_point(aes(fill = seTE.random), size = 4, pch = 21) +  
+  coord_flip() + 
+  geom_hline(yintercept=0) + theme_bw() + labs(y="Mean difference in CLR (95% CI)") +
+  facet_wrap(~schep) +
+  xlab("Taxa: Species") +
+  scale_fill_viridis_c() +
+  labs(fill = "SE") +
+  theme(axis.title.x = element_text(size = 14),
+        axis.title.y = element_text(size = 14),
+        axis.text.x = element_text(size = 12),
+        axis.text.y = element_text(size = 12),
+        strip.text.x = element_text(size = 12))
+
+# Combine graphs and save
+gg<-ggarrange(gsp, ssp, psp, ncol = 1, align = "v")
+g_cf<-annotate_figure(gg, top = text_grob("Sensitivity analysis performed omitting the dataset from Scheperjans et al.", face  = "bold", size =14))
+
+ggsave(filename = "Diff_sch_overall.tiff", 
+       plot = g_cf, 
+       device = "tiff",
+       width = 11, 
+       height = 20,
+       dpi = 300)
+```
+
+#Prevotella figures across gender and studies
+
+Re-run the part included in the GLMM script to collect only the data of the datasets reporting metadata.
+After that, make the graph.
+
+```{R}
+# Family
+load("Confounders_family.RData")
+pro<- transform_sample_counts(rar_com, function(x){x / sum(x)})
+
+conf$sample<-as.character(conf$sample)
+conf$age<-as.numeric(as.character(conf$age))
+
+conf<-conf[conf$sample %in% sample_names(pro),]
+rar_com_m<-prune_samples(conf$sample, pro)
+nrow(conf) == nsamples(rar_com_m) 
+rar_com_sign<-prune_taxa(sign_otu, rar_com_m)
+
+# Createa df containing the metadata and the count data
+rar_map<-as.data.frame(sample_data(rar_com_sign)) # recover metadata from phyloseq
+otu<-as.data.frame(t(otu_table(rar_com_sign))) # recover taxa counts from phyloseq
+
+conf<-conf[order(conf$sample),]
+otu<-otu[order(rownames(otu)),]
+rar_map<-rar_map[order(rownames(rar_map)),]
+all(conf$sample == rownames(otu))
+all(rownames(rar_map) == rownames(otu))
+data<-cbind.data.frame(otu, rar_map, conf)
+
+# Remove the potential bias due to unbalanced sampling
+d<-melt(data.frame(samle = data$sample, age = data$age, status = data$status))
+ggplot(d, aes(value, fill = status)) +
+  geom_bar()
+data<-subset(data, age >= 43)
+
+# Do graph for Prevotellaceae
+prev<-cbind.data.frame( rel_ab = data$`Bacteria;Bacteroidota;Bacteroidia;Bacteroidales;Prevotellaceae`,
+                        age =  data$age, gender = data$gender,
+                        status = data$status,
+                        study = data$study)
+
+prev$status<-as.factor(prev$status)
+prev$gender<-as.factor(prev$gender)
+
+fam<-ggplot(prev, aes(status, log10(rel_ab), fill = gender)) +
+  geom_boxplot() +
+  scale_fill_brewer(type = "div", palette = 7) +
+  theme_bw() +
+  facet_wrap(~ study, ncol = 5)+
+  xlab("Status") +
+  labs(fill = "Gender") +
+  theme(strip.text.x = element_text(size = 12),
+        axis.title.x = element_blank(),
+        axis.title.y = element_text(size = 14),
+        legend.title = element_text(size =12, face = "bold"),
+        axis.text.x = element_text(size = 14),
+        legend.text = element_text(size = 12),
+        axis.text.y = element_text(size = 14),
+        plot.margin = margin(15,2,5,2))
+
+# Species 
+load("Confounders_species.RData")
+pro<- transform_sample_counts(rar_com, function(x){x / sum(x)})
+
+conf$sample<-as.character(conf$sample)
+conf$age<-as.numeric(as.character(conf$age))
+
+conf<-conf[conf$sample %in% sample_names(pro),] 
+rar_com_m<-prune_samples(conf$sample, pro) 
+nrow(conf) == nsamples(rar_com_m)
+rar_com_sign<-prune_taxa(sign_otu, rar_com_m)
+
+rar_map<-as.data.frame(sample_data(rar_com_sign)) # recover metadata from phyloseq
+otu<-as.data.frame(t(otu_table(rar_com_sign))) # recover taxa counts from phyloseq
+
+conf<-conf[order(conf$sample),]
+otu<-otu[order(rownames(otu)),]
+rar_map<-rar_map[order(rownames(rar_map)),]
+all(conf$sample == rownames(otu))
+all(rownames(rar_map) == rownames(otu))
+data<-cbind.data.frame(otu, rar_map, conf)
+
+# Remove the potential bias due to unbalance sampling
+d<-melt(data.frame(samle = data$sample, age = data$age, status = data$status))
+ggplot(d, aes(value, fill = status)) +
+  geom_bar()
+data<-subset(data, age >= 43)
+
+# Do graph for Prevotellaceae sp.
+prev<-cbind.data.frame( rel_ab = data$`Bacteria;Bacteroidota;Bacteroidia;Bacteroidales;Prevotellaceae;?;?`,
+                        age =  data$age, gender = data$gender,
+                        status = data$status,
+                        study = data$study)
+
+prev$status<-as.factor(prev$status)
+prev$gender<-as.factor(prev$gender)
+
+sp<-ggplot(prev, aes(status, log10(rel_ab), fill = gender)) +
+  geom_boxplot() +
+  scale_fill_brewer(type = "div", palette = 7) +
+  theme_bw() +
+  facet_wrap(~ study, ncol = 5)+
+  xlab("Status") +
+  labs(fill = "Gender")+
+  theme(strip.text.x = element_text(size = 12),
+        axis.title.x = element_blank(),
+        axis.title.y = element_text(size = 14),
+        legend.title = element_text(size =12, face = "bold"),
+        legend.text = element_text(size = 12),
+        axis.text.x = element_text(size = 14),
+        axis.text.y = element_text(size = 14),
+        plot.margin = margin(15,2,5,2))
+
+# Do graph for Prevotella sp (from gut metagenome)
+prev2<-cbind.data.frame( rel_ab = data$`Bacteria;Bacteroidota;Bacteroidia;Bacteroidales;Prevotellaceae;Prevotella;metagenome`,
+                        age =  data$age, gender = data$gender,
+                        status = data$status,
+                        study = data$study)
+
+prev2$status<-as.factor(prev$status)
+prev2$gender<-as.factor(prev$gender)
+
+sp_2<-ggplot(prev2, aes(status, log10(rel_ab), fill = gender)) +
+  geom_boxplot() +
+  scale_fill_brewer(type = "div", palette = 7) +
+  theme_bw() +
+  facet_wrap(~ study, ncol = 5)+
+  xlab("Status") +
+  labs(fill = "Gender") +
+  theme(strip.text.x = element_text(size = 12),
+        axis.title.x = element_text(size = 14),
+        axis.title.y = element_text(size = 14),
+        legend.title = element_text(size =12, face = "bold"),
+        axis.text.x = element_text(size = 14),
+        legend.text = element_text(size = 12),
+        axis.text.y = element_text(size = 14),
+        plot.margin = margin(15,2,5,2))
+
+# Combine graphs
+gg<-ggarrange(fam, sp, sp_2, common.legend = T, ncol = 1, align = "v",
+          labels = c("a: Family Prevotellaceae", "b: Prevotellaceae unknown sp.", "c: Prevotella sp"),
+          hjust = c(-0.30,-0.35, -0.5),
+          vjust = c(-0.2,-0.2, -0.2),
+          font.label = list(size = 12))
+
+# Add title
+g_cf<-annotate_figure(gg, top = text_grob("Distribution of Prevetella across study, gender, and disease status"))
+
+# Save
+ggsave(g_cf, filename = "Prev_gender.svg",
+       device = "svg", width = 16, height = 4.5, dpi = 300)
+
+```
+
