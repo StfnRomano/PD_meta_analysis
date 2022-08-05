@@ -2,7 +2,7 @@
 
 **Please note**, these scripts are purely intended as a descriptive extension of the methods used in the publication: 
 
-Romano, Savva, Bedarf, Charles, Hildebrand, Narbad, 2020, *Meta-analysis of the Parkinson’s disease gut microbiome suggests alterations linked to intestinal inflammation* npj Parkinsons Dis. 7, 27 (2021). https://doi.org/10.1038/s41531-021-00156-z
+Romano, Savva, Bedarf, Charles, Hildebrand, Narbad, 2021, *Meta-analysis of the Parkinson’s disease gut microbiome suggests alterations linked to intestinal inflammation* npj Parkinsons Dis. 7, 27 (2021). https://doi.org/10.1038/s41531-021-00156-z
 
 If you wish to use any material in this repository please be aware that this code was tailored to the analyses conducted in the above manuscript and it is presented here to foster reproducibility. **The code is not intended to be used in other contexts**. Hence, use it at your own risk.
 Only the code related to the analyses performed at the Species level is reported, as it is identical to the one used for analyzing Genus, Family, and 16S-based functional predictions. Specific changes made to accommodate the data structure of the other taxonomic ranks will be reported in the description below.
@@ -10,7 +10,7 @@ The work-flow consists of 10 R scripts that need to be executed one after the ot
 
 **If you find this code useful or use any of the approaches below in your work, please cite**:
 
-Romano, Savva, Bedarf, Charles, Hildebrand, Narbad, 2020, *Meta-analysis of the Parkinson’s disease gut microbiome suggests alterations linked to intestinal inflammation* npj Parkinsons Dis. 7, 27 (2021). https://doi.org/10.1038/s41531-021-00156-z
+Romano, Savva, Bedarf, Charles, Hildebrand, Narbad, 2021, *Meta-analysis of the Parkinson’s disease gut microbiome suggests alterations linked to intestinal inflammation* npj Parkinsons Dis. 7, 27 (2021). https://doi.org/10.1038/s41531-021-00156-z
 
 ## Work-flow
 
